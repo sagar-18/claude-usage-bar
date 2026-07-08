@@ -255,8 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Self-contained: read the Claude Code OAuth token from the Keychain and call the
-    /// usage endpoint. The `claude-code` User-Agent is required to avoid the aggressively
-    /// rate-limited bucket. No user input is interpolated, so there is no shell-injection surface.
+    /// usage endpoint. No user input is interpolated, so there is no shell-injection surface.
     private func runQuery() -> Data? {
         let cmd = """
         export PATH=/usr/bin:/bin

@@ -35,12 +35,15 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 
 ## Install
 
-### Homebrew (builds from source — no Gatekeeper prompts)
+### Homebrew (builds from source — no Gatekeeper prompts, single repo)
 ```bash
-brew install sagar-18/tap/claude-usage-bar
+brew tap sagar-18/claude-usage-bar https://github.com/sagar-18/claude-usage-bar
+brew install --HEAD sagar-18/claude-usage-bar/claude-usage-bar
 claude-usage-bar &          # start it
 ```
-Then enable **Launch at Login** from the menu.
+Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Then enable **Launch at Login** from the menu.
+
+To update later: `brew upgrade --fetch-HEAD claude-usage-bar`.
 
 ### Manual
 ```bash
@@ -49,9 +52,6 @@ cd claude-usage-bar
 ./build.sh
 open ClaudeUsageBar.app
 ```
-
-## Why does it need the `claude-code` User-Agent?
-The `/api/oauth/usage` endpoint is [aggressively rate-limited](https://github.com/anthropics/claude-code/issues/31637) and returns persistent `429`s to clients that don't send a `User-Agent: claude-code/<version>` header. This app sends it so the endpoint responds normally. It still polls only every 5 minutes and backs off on errors.
 
 ## Privacy
 - Reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself).

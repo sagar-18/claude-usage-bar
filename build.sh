@@ -38,7 +38,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Ad-hoc code-signing (required for Launch-at-Login / SMAppService)…"
-codesign --force --deep --sign - "$APP"
+echo "==> Ad-hoc code-signing (needed for Launch-at-Login / SMAppService)…"
+codesign --force --deep --sign - "$APP" || echo "⚠️  codesign failed — the app still runs; Launch-at-Login may not work"
 
 echo "✅ Built $APP"
