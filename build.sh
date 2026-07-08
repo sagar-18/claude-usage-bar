@@ -7,10 +7,15 @@ OUT="${1:-.}"
 APP="$OUT/ClaudeUsageBar.app"
 VERSION="1.0.0"
 
+DIR="$(dirname "$0")"
+
 echo "==> Compiling…"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-swiftc -O "$(dirname "$0")/Sources/ClaudeUsageBar.swift" -o "$APP/Contents/MacOS/ClaudeUsageBar"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+swiftc -O "$DIR/Sources/ClaudeUsageBar.swift" -o "$APP/Contents/MacOS/ClaudeUsageBar"
+
+echo "==> Adding icon…"
+cp "$DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> Writing Info.plist…"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -22,6 +27,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>Claude Usage Bar</string>
     <key>CFBundleIdentifier</key><string>com.sagar18.claude-usage-bar</string>
     <key>CFBundleExecutable</key><string>ClaudeUsageBar</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
