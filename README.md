@@ -26,6 +26,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 - ⏱️ **Reset countdowns** per limit
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - 🔁 **Launch at Login** toggle (modern `SMAppService`, no LaunchAgents)
+- ⬆️ **In-app updates** — checks GitHub releases daily; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
 - 🪶 Native Swift/AppKit, ~single file, no dependencies, no telemetry
 
 ## Requirements
@@ -43,7 +44,7 @@ claude-usage-bar            # start it (launches detached; survives terminal clo
 ```
 Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Then enable **Launch at Login** from the menu.
 
-To update later: `brew upgrade --fetch-HEAD claude-usage-bar`.
+To update later: the app checks GitHub daily and shows **"Update to X.Y.Z available…"** in its menu — one click rebuilds via brew and relaunches. Or manually: `brew update && brew reinstall claude-usage-bar`.
 
 ### Manual
 ```bash
