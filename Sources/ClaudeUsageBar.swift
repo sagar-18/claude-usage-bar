@@ -69,6 +69,19 @@ enum Theme: String, CaseIterable {
     }
 }
 
+// MARK: - Menu bar style
+
+enum BarStyle: String, CaseIterable {
+    case full    = "Full"
+    case compact = "Compact (worst limit)"
+    case session = "5-hour session only"
+
+    static var current: BarStyle {
+        get { BarStyle(rawValue: UserDefaults.standard.string(forKey: "barStyle") ?? "") ?? .full }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "barStyle") }
+    }
+}
+
 // MARK: - Generic helpers
 
 func makeLabel(_ s: String, size: CGFloat, weight: NSFont.Weight,
@@ -209,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.1.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -382,9 +395,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendFooter(to: menu)
         statusItem.menu = menu
 
-        let title = "◐ " + parts.joined(separator: " · ")
+        // Menu-bar title per the user's chosen style. Narrower styles help on
+        // notched MacBooks, where a crowded menu bar silently hides wide items.
+        let title: String
+        var titleColor = theme.accent(worst: worst, worstKind: worstKind)
+        switch BarStyle.current {
+        case .full:
+            title = "◐ " + parts.joined(separator: " · ")
+        case .compact:
+            title = "◐ \(Int(worst))%"
+        case .session:
+            if let s = limits.first(where: { ($0["kind"] as? String) == "session" }) {
+                let p = (s["percent"] as? NSNumber)?.doubleValue ?? 0
+                title = "◐ 5h \(Int(p))%"
+                titleColor = theme.color(kind: "session", pct: p)
+            } else {
+                title = "◐ " + parts.joined(separator: " · ")
+            }
+        }
         statusItem.button?.attributedTitle = NSAttributedString(string: title, attributes: [
-            .foregroundColor: theme.accent(worst: worst, worstKind: worstKind),
+            .foregroundColor: titleColor,
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
         ])
     }
@@ -404,6 +434,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
+
+        let styleItem = NSMenuItem(title: "Menu Bar Style", action: nil, keyEquivalent: "")
+        styleItem.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: nil)
+        let styleMenu = NSMenu()
+        for s in BarStyle.allCases {
+            let it = NSMenuItem(title: s.rawValue, action: #selector(selectStyle(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = s.rawValue
+            it.state = (s == BarStyle.current) ? .on : .off
+            styleMenu.addItem(it)
+        }
+        styleItem.submenu = styleMenu
+        menu.addItem(styleItem)
 
         let refreshMenuItem = NSMenuItem(title: "Auto Refresh", action: nil, keyEquivalent: "")
         refreshMenuItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)
@@ -604,6 +647,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let raw = sender.representedObject as? String, let t = Theme(rawValue: raw) {
             Theme.current = t
             render()   // no network — just recolor from last data
+        }
+    }
+    @objc private func selectStyle(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let s = BarStyle(rawValue: raw) {
+            BarStyle.current = s
+            render()   // no network — just re-render the title from last data
         }
     }
     @objc private func selectRefresh(_ sender: NSMenuItem) {
