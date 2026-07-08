@@ -195,18 +195,31 @@ final class SepView: NSView {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
+    var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
     private var backoff: TimeInterval = 0
+    private var latestVersion: String?   // set when GitHub has a newer release
+    private var updating = false         // true while `brew` rebuilds in the background
     static var refreshMinutes: Int {
         get { let v = UserDefaults.standard.integer(forKey: "refreshMinutes"); return v == 0 ? 5 : v }
         set { UserDefaults.standard.set(newValue, forKey: "refreshMinutes") }
     }
     private var normalInterval: TimeInterval { TimeInterval(AppDelegate.refreshMinutes * 60) }
 
+    /// Falls back to the build-time version when run outside the .app bundle.
+    /// Keep the fallback in sync with VERSION in build.sh.
+    static let currentVersion =
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.1.0"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "◐ …"
         tick()
+        // Check for updates shortly after launch, then daily.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkForUpdates() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 24 * 3600, repeats: true) { [weak self] _ in
+            self?.checkForUpdates()
+        }
     }
 
     // MARK: - Scheduling with exponential backoff (handles the endpoint's 429s)
@@ -423,6 +436,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageItem.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
         menu.addItem(usageItem)
 
+        if updating {
+            let it = NSMenuItem(title: "Updating… (rebuilding via brew)", action: nil, keyEquivalent: "")
+            it.isEnabled = false
+            it.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+            menu.addItem(it)
+        } else if let v = latestVersion {
+            let it = NSMenuItem(title: "Update to \(v) available…", action: #selector(installUpdate), keyEquivalent: "")
+            it.target = self
+            it.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+            menu.addItem(it)
+        } else {
+            let it = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
+            it.target = self
+            it.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+            menu.addItem(it)
+        }
+
         let aboutItem = NSMenuItem(title: "About (unofficial)", action: #selector(about), keyEquivalent: "")
         aboutItem.target = self
         aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
@@ -457,6 +487,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
     }
 
+    // MARK: - Updates (GitHub releases check + one-click `brew` upgrade)
+    //
+    // No Sparkle, no downloaded binaries (unsigned apps would hit Gatekeeper).
+    // Homebrew is the update channel: we compare our version against the latest
+    // GitHub release tag, and on demand run `brew update && brew reinstall`,
+    // which rebuilds from source locally, then relaunch.
+
+    private func semverIsNewer(_ remote: String, than local: String) -> Bool {
+        let r = remote.split(separator: ".").map { Int($0) ?? 0 }
+        let l = local.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(r.count, l.count) {
+            let a = i < r.count ? r[i] : 0
+            let b = i < l.count ? l[i] : 0
+            if a != b { return a > b }
+        }
+        return false
+    }
+
+    private func checkForUpdates(interactive: Bool = false) {
+        var req = URLRequest(url: URL(string: "https://api.github.com/repos/sagar-18/claude-usage-bar/releases/latest")!)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            var remote: String?
+            if let data = data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let tag = obj["tag_name"] as? String {
+                remote = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let remote = remote, self.semverIsNewer(remote, than: Self.currentVersion) {
+                    self.latestVersion = remote
+                    self.render()
+                    if interactive { self.installUpdate() }
+                } else if interactive {
+                    let a = NSAlert()
+                    if remote == nil {
+                        a.messageText = "Couldn't check for updates"
+                        a.informativeText = "Could not reach GitHub. Please try again later."
+                    } else {
+                        a.messageText = "You're up to date"
+                        a.informativeText = "Claude Usage Bar \(Self.currentVersion) is the latest version."
+                    }
+                    a.runModal()
+                }
+            }
+        }.resume()
+    }
+    @objc private func checkForUpdatesClicked() { checkForUpdates(interactive: true) }
+
+    private var brewPath: String? {
+        ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    @objc private func installUpdate() {
+        guard let v = latestVersion, !updating else { return }
+        guard let brew = brewPath else {
+            // Not a brew install (or brew missing) — send them to the release page.
+            NSWorkspace.shared.open(URL(string: "https://github.com/sagar-18/claude-usage-bar/releases/latest")!)
+            return
+        }
+        let a = NSAlert()
+        a.messageText = "Update to \(v)?"
+        a.informativeText = "This runs `brew update && brew reinstall claude-usage-bar` in the background (rebuilds from source, may take a minute) and relaunches the app when done."
+        a.addButton(withTitle: "Update")
+        a.addButton(withTitle: "Later")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+
+        updating = true
+        render()
+        let prefix = (brew as NSString).deletingLastPathComponent          // …/bin
+        let appPath = ((prefix as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent("opt/claude-usage-bar/ClaudeUsageBar.app")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/bash")
+            task.arguments = ["-c", "\"\(brew)\" update >/dev/null 2>&1; \"\(brew)\" reinstall claude-usage-bar 2>&1"]
+            let out = Pipe()
+            task.standardOutput = out
+            task.standardError = out
+            do { try task.run() } catch {
+                DispatchQueue.main.async { self?.updateFailed("Couldn't run brew: \(error.localizedDescription)") }
+                return
+            }
+            let output = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            task.waitUntilExit()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if task.terminationStatus == 0 {
+                    // Relaunch the freshly built app after we exit.
+                    let relaunch = Process()
+                    relaunch.executableURL = URL(fileURLWithPath: "/bin/bash")
+                    relaunch.arguments = ["-c", "sleep 1; open \"\(appPath)\""]
+                    try? relaunch.run()
+                    NSApplication.shared.terminate(nil)
+                } else {
+                    self.updateFailed(String(output.suffix(500)))
+                }
+            }
+        }
+    }
+
+    private func updateFailed(_ detail: String) {
+        updating = false
+        render()
+        let a = NSAlert()
+        a.messageText = "Update failed"
+        a.informativeText = "brew reinstall did not succeed. You can update manually:\n\nbrew update && brew reinstall claude-usage-bar\n\n\(detail)"
+        a.runModal()
+    }
+
     @objc private func selectTheme(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let t = Theme(rawValue: raw) {
             Theme.current = t
@@ -476,7 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func about() {
         let a = NSAlert()
-        a.messageText = "Claude Usage Bar"
+        a.messageText = "Claude Usage Bar \(Self.currentVersion)"
         a.informativeText = """
         Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic.
 
