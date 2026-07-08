@@ -23,6 +23,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ## Features
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
 - 🎨 **5 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal
+- 📏 **3 menu-bar styles** — Full (`◐ 5h 2% · wk 4% · Fab 8%`), Compact (`◐ 8%`, worst limit), or 5-hour session only (`◐ 5h 2%`) — the narrow styles fit crowded/notched menu bars
 - ⏱️ **Reset countdowns** per limit
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - 🔁 **Launch at Login** toggle (modern `SMAppService`, no LaunchAgents)
