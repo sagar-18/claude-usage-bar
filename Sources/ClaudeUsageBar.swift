@@ -197,7 +197,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var timer: Timer?
     var lastLimits: [[String: Any]]?
     private var backoff: TimeInterval = 0
-    private let normalInterval: TimeInterval = 300   // 5 min when healthy
+    static var refreshMinutes: Int {
+        get { let v = UserDefaults.standard.integer(forKey: "refreshMinutes"); return v == 0 ? 5 : v }
+        set { UserDefaults.standard.set(newValue, forKey: "refreshMinutes") }
+    }
+    private var normalInterval: TimeInterval { TimeInterval(AppDelegate.refreshMinutes * 60) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -389,6 +393,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
 
+        let refreshMenuItem = NSMenuItem(title: "Auto Refresh", action: nil, keyEquivalent: "")
+        refreshMenuItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)
+        let rMenu = NSMenu()
+        for mins in [1, 2, 5, 10, 15, 30, 60] {
+            let it = NSMenuItem(title: "\(mins) min", action: #selector(selectRefresh(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = mins
+            it.state = (mins == AppDelegate.refreshMinutes) ? .on : .off
+            rMenu.addItem(it)
+        }
+        refreshMenuItem.submenu = rMenu
+        menu.addItem(refreshMenuItem)
+
         let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = loginEnabled ? .on : .off
@@ -445,6 +462,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let raw = sender.representedObject as? String, let t = Theme(rawValue: raw) {
             Theme.current = t
             render()   // no network — just recolor from last data
+        }
+    }
+    @objc private func selectRefresh(_ sender: NSMenuItem) {
+        if let mins = sender.representedObject as? Int {
+            AppDelegate.refreshMinutes = mins
+            backoff = 0
+            scheduleNext(normalInterval)   // apply new cadence without an extra fetch
+            render()                       // update the checkmark
         }
     }
     @objc private func openUsage() {
