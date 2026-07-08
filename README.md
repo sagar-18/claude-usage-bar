@@ -16,7 +16,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 
 > [!WARNING]
 > **Use at your own risk — no warranty, no liability.**
-> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude / Anthropic account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoint it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it, or use the fully-sanctioned local-log approach ([ccusage](https://github.com/ryoppippi/ccusage)) instead.
+> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude / Anthropic account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoint it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it.
 
 ---
 
