@@ -12,7 +12,11 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 
 > [!IMPORTANT]
 > **Unofficial. Not affiliated with, or endorsed by, Anthropic.**
-> This reads **your own** usage using **your own** local Claude Code login token, by calling an **undocumented** endpoint (`/api/oauth/usage`) that Anthropic may change or remove at any time. It polls gently (every 5 min, with exponential backoff) to respect rate limits. Use at your own discretion. No data leaves your machine; there is no server, telemetry, or account beyond your existing Claude login.
+> This reads **your own** usage using **your own** local Claude Code login token, by calling an **undocumented** endpoint (`/api/oauth/usage`) that Anthropic may change or remove at any time. It polls gently (every 5 min by default, with exponential backoff) to respect rate limits. No data leaves your machine; there is no server, telemetry, or account beyond your existing Claude login.
+
+> [!WARNING]
+> **Use at your own risk — no warranty, no liability.**
+> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude / Anthropic account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoint it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it, or use the fully-sanctioned local-log approach ([ccusage](https://github.com/ryoppippi/ccusage)) instead.
 
 ---
 

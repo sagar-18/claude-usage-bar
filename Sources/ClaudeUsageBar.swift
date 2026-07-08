@@ -481,7 +481,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         a.informativeText = """
         Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic.
 
-        It reads YOUR usage from YOUR local Claude Code login token and calls an undocumented endpoint that may change at any time. Polls gently and respects rate limits.
+        It reads YOUR usage from YOUR local Claude Code login token and calls an undocumented endpoint that may change at any time.
+
+        USE AT YOUR OWN RISK. Provided “as is”, with no warranty of any kind. The author is NOT responsible or liable for anything that happens to your Claude / Anthropic account — including rate limiting, throttling, suspension, or termination — arising from use of this app. By using it, you accept full responsibility.
 
         MIT licensed · github.com/sagar-18/claude-usage-bar
         """
