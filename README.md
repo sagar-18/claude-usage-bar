@@ -39,7 +39,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ```bash
 brew tap sagar-18/claude-usage-bar https://github.com/sagar-18/claude-usage-bar
 brew install --HEAD sagar-18/claude-usage-bar/claude-usage-bar
-claude-usage-bar &          # start it
+claude-usage-bar            # start it (launches detached; survives terminal close)
 ```
 Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Then enable **Launch at Login** from the menu.
 

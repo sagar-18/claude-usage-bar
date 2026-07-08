@@ -18,13 +18,14 @@ class ClaudeUsageBar < Formula
     prefix.install "ClaudeUsageBar.app"
     (bin/"claude-usage-bar").write <<~SH
       #!/bin/bash
-      exec "#{opt_prefix}/ClaudeUsageBar.app/Contents/MacOS/ClaudeUsageBar" "$@"
+      # Launch detached via LaunchServices so it keeps running after the terminal closes.
+      exec open "#{opt_prefix}/ClaudeUsageBar.app"
     SH
   end
 
   def caveats
     <<~EOS
-      ▸ Start it:      claude-usage-bar &
+      ▸ Start it:      claude-usage-bar
         or open:       open "#{opt_prefix}/ClaudeUsageBar.app"
       ▸ Then enable "Launch at Login" from the menu-bar dropdown.
 
