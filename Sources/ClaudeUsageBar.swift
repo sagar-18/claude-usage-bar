@@ -217,6 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastUpdateCheck: Date?   // throttles the menu-open update check
     private var updating = false         // true while `brew` rebuilds in the background
     private var lastSuccess: Date?       // when we last parsed fresh usage data
+    private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
     /// Claude Code can renew it — when it lapses we must say so instead of
@@ -232,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.2"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.3"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -267,6 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// sleep, which pauses timers). Also check whenever the menu is opened, at
     /// most once an hour — the moment the user looks is the moment it matters.
     func menuWillOpen(_ menu: NSMenu) {
+        // The freshness label is baked in at render time, which happens right
+        // after each successful fetch — left alone it would read "just now"
+        // forever. Re-stamp it with the real age at the moment of opening.
+        freshItem?.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 11),
+        ])
         if let last = lastUpdateCheck, -last.timeIntervalSinceNow < 3600 { return }
         checkForUpdates()
     }
@@ -430,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             appendFooter(to: menu)
             statusItem.menu = menu
+            freshItem = nil   // this menu has no freshness row
             return
         }
 
@@ -484,6 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .font: NSFont.systemFont(ofSize: 11),
         ])
         menu.addItem(fresh)
+        freshItem = fresh
 
         appendFooter(to: menu)
         statusItem.menu = menu
