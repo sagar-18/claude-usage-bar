@@ -16,11 +16,15 @@ func ramp(_ p: Double, _ c1: NSColor, _ c2: NSColor, _ c3: NSColor, _ c4: NSColo
 // MARK: - Themes
 
 enum Theme: String, CaseIterable {
-    case severity = "Severity"
-    case ocean    = "Ocean"
-    case claude   = "Claude"
-    case identity = "Per-Metric"
-    case mono     = "Minimal"
+    case severity   = "Severity"
+    case ocean      = "Ocean"
+    case claude     = "Claude"
+    case identity   = "Per-Metric"
+    case mono       = "Minimal"
+    case catppuccin = "Catppuccin"
+    case nord       = "Nord"
+    case dracula    = "Dracula"
+    case terminal   = "Terminal"
 
     static var current: Theme {
         get { Theme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .ocean }
@@ -34,6 +38,10 @@ enum Theme: String, CaseIterable {
         case .claude:   return "sparkles"
         case .identity: return "circle.hexagongrid.fill"
         case .mono:     return "circle.fill"
+        case .catppuccin: return "cup.and.saucer.fill"
+        case .nord:       return "snowflake"
+        case .dracula:    return "moon.fill"
+        case .terminal:   return "terminal.fill"
         }
     }
 
@@ -57,6 +65,18 @@ enum Theme: String, CaseIterable {
             }
         case .mono:
             return rgb(0.851,0.467,0.341)
+        case .catppuccin:
+            return ramp(pct, rgb(0.651,0.890,0.631), rgb(0.537,0.706,0.980),
+                             rgb(0.980,0.702,0.529), rgb(0.953,0.545,0.659))
+        case .nord:
+            return ramp(pct, rgb(0.533,0.753,0.816), rgb(0.506,0.631,0.757),
+                             rgb(0.369,0.506,0.675), rgb(0.749,0.380,0.416))
+        case .dracula:
+            return ramp(pct, rgb(0.314,0.980,0.482), rgb(0.545,0.914,0.992),
+                             rgb(1.000,0.722,0.424), rgb(1.000,0.333,0.333))
+        case .terminal:
+            return ramp(pct, rgb(0.224,1.000,0.478), rgb(0.180,0.851,0.408),
+                             rgb(0.718,0.878,0.263), rgb(1.000,0.420,0.290))
         }
     }
 
@@ -75,12 +95,70 @@ enum BarStyle: String, CaseIterable {
     case full    = "Full"
     case compact = "Compact (worst limit)"
     case session = "5-hour session only"
+    case ring    = "Ring icon (worst limit)"
 
     // Narrow default: crowded/notched menu bars silently hide wide items, and a
     // hidden icon looks like a broken install to a first-time user.
     static var current: BarStyle {
         get { BarStyle(rawValue: UserDefaults.standard.string(forKey: "barStyle") ?? "") ?? .session }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "barStyle") }
+    }
+}
+
+// MARK: - Dropdown layout
+
+enum LayoutStyle: String, CaseIterable {
+    case classic  = "Classic"
+    case rings    = "Rings"
+    case segments = "Segments"
+    case trend    = "Trend + forecast"
+
+    static var current: LayoutStyle {
+        get { LayoutStyle(rawValue: UserDefaults.standard.string(forKey: "layoutStyle") ?? "") ?? .classic }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "layoutStyle") }
+    }
+}
+
+// MARK: - Usage history (persisted locally; feeds the Trend layout's forecast)
+
+enum UsageHistory {
+    static func record(_ limits: [[String: Any]]) {
+        var arr = (UserDefaults.standard.array(forKey: "usageHistory") as? [[String: Any]]) ?? []
+        let now = Date().timeIntervalSince1970
+        for l in limits {
+            guard let kind = l["kind"] as? String else { continue }
+            let pct = (l["percent"] as? NSNumber)?.doubleValue ?? 0
+            arr.append(["t": now, "k": kind, "p": pct])
+        }
+        let cutoff = now - 7 * 24 * 3600
+        arr = arr.filter { (($0["t"] as? Double) ?? 0) >= cutoff }
+        UserDefaults.standard.set(arr, forKey: "usageHistory")
+    }
+
+    static func series(kind: String, hours: Double) -> [(t: Double, p: Double)] {
+        let arr = (UserDefaults.standard.array(forKey: "usageHistory") as? [[String: Any]]) ?? []
+        let cutoff = Date().timeIntervalSince1970 - hours * 3600
+        return arr.compactMap { e -> (t: Double, p: Double)? in
+            guard let t = e["t"] as? Double, t >= cutoff,
+                  (e["k"] as? String) == kind,
+                  let p = (e["p"] as? NSNumber)?.doubleValue else { return nil }
+            return (t, p)
+        }.sorted { $0.t < $1.t }
+    }
+
+    /// Linear projection of when this limit hits 100%, from points since the
+    /// last reset. Nil when there's no meaningful upward signal.
+    static func forecast(kind: String, current: Double) -> Date? {
+        guard current < 100 else { return Date() }
+        var s = series(kind: kind, hours: kind == "session" ? 4 : 48)
+        var start = 0
+        for i in 1..<max(s.count, 1) where i < s.count && s[i].p < s[i-1].p - 1 { start = i }
+        if start > 0 { s = Array(s[start...]) }
+        guard s.count >= 2 else { return nil }
+        let dt = s[s.count-1].t - s[0].t
+        let dp = s[s.count-1].p - s[0].p
+        guard dt > 600, dp > 0.5 else { return nil }
+        return Date(timeIntervalSince1970: s[s.count-1].t + (100 - current) / (dp / dt))
     }
 }
 
@@ -164,6 +242,187 @@ final class RowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// MARK: - Rings layout
+
+final class RingGaugeView: NSView {
+    private let pct: Double
+    private let color: NSColor
+    init(pct: Double, color: NSColor) {
+        self.pct = pct; self.color = color
+        super.init(frame: NSRect(x: 0, y: 0, width: 52, height: 52))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        let c = NSPoint(x: bounds.midX, y: bounds.midY)
+        let track = NSBezierPath()
+        track.appendArc(withCenter: c, radius: 21, startAngle: 0, endAngle: 360)
+        track.lineWidth = 5
+        NSColor.quaternaryLabelColor.setStroke()
+        track.stroke()
+        let p = min(max(pct, 0), 100)
+        if p > 0 {
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: c, radius: 21, startAngle: 90,
+                          endAngle: 90 - 360 * CGFloat(p) / 100, clockwise: true)
+            arc.lineWidth = 5
+            arc.lineCapStyle = .round
+            color.setStroke()
+            arc.stroke()
+        }
+        let s = "\(Int(pct))"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let size = s.size(withAttributes: attrs)
+        s.draw(at: NSPoint(x: c.x - size.width / 2, y: c.y - size.height / 2), withAttributes: attrs)
+    }
+}
+
+final class RingsRowView: NSView {
+    init(gauges: [(label: String, reset: String, pct: Double, color: NSColor)]) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 100))
+        let n = CGFloat(max(gauges.count, 1))
+        let slot = (frame.width - 32) / n
+        for (i, g) in gauges.enumerated() {
+            let cx = 16 + slot * CGFloat(i) + slot / 2
+            let ring = RingGaugeView(pct: g.pct, color: g.color)
+            ring.frame.origin = NSPoint(x: cx - 26, y: 38)
+            addSubview(ring)
+            let lab = makeLabel(g.label, size: 11, weight: .semibold, color: .labelColor, align: .center)
+            lab.frame = NSRect(x: cx - slot / 2, y: 20, width: slot, height: 15)
+            addSubview(lab)
+            let res = makeLabel(g.reset, size: 9.5, weight: .regular, color: .secondaryLabelColor, align: .center)
+            res.frame = NSRect(x: cx - slot / 2, y: 6, width: slot, height: 12)
+            addSubview(res)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// MARK: - Segments layout
+
+final class SegBarView: NSView {
+    private let pct: Double
+    private let fill: NSColor
+    init(pct: Double, fill: NSColor, width: CGFloat) {
+        self.pct = pct; self.fill = fill
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 7))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        let n = 10
+        let gap: CGFloat = 2
+        let cell = (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n)
+        let filled = Int((min(max(pct, 0), 100) / 10).rounded())
+        for i in 0..<n {
+            let rect = NSRect(x: CGFloat(i) * (cell + gap), y: 0, width: cell, height: bounds.height)
+            if i < filled { fill.setFill() }
+            else if i >= 9 { NSColor.systemRed.withAlphaComponent(0.25).setFill() }
+            else if i >= 7 { NSColor.systemOrange.withAlphaComponent(0.22).setFill() }
+            else { NSColor.quaternaryLabelColor.setFill() }
+            NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+        }
+    }
+}
+
+final class SegRowView: NSView {
+    init(icon: String, name: String, pct: Double, reset: String, active: Bool, color: NSColor) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
+        let W = frame.width
+        let iv = NSImageView(frame: NSRect(x: 16, y: 34, width: 15, height: 15))
+        iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        iv.contentTintColor = color
+        addSubview(iv)
+        let nameField = makeLabel(name, size: 13, weight: .semibold, color: .labelColor)
+        nameField.frame = NSRect(x: 40, y: 33, width: 190, height: 18)
+        addSubview(nameField)
+        if active {
+            let dot = makeLabel("● LIVE", size: 8, weight: .bold, color: color)
+            let w = nameField.attributedStringValue.size().width
+            dot.frame = NSRect(x: 40 + min(w, 190) + 6, y: 36, width: 46, height: 12)
+            addSubview(dot)
+        }
+        let pctField = makeLabel("\(Int(pct))%", size: 14, weight: .bold,
+                                 color: color, align: .right, mono: true)
+        pctField.frame = NSRect(x: W - 74, y: 32, width: 58, height: 20)
+        addSubview(pctField)
+        let bar = SegBarView(pct: pct, fill: color, width: W - 40 - 16)
+        bar.frame.origin = NSPoint(x: 40, y: 22)
+        addSubview(bar)
+        if !reset.isEmpty {
+            let r = makeLabel(reset, size: 11, weight: .regular, color: .secondaryLabelColor)
+            r.frame = NSRect(x: 40, y: 5, width: W - 56, height: 14)
+            addSubview(r)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// MARK: - Trend layout
+
+final class SparkView: NSView {
+    private let points: [(t: Double, p: Double)]
+    private let color: NSColor
+    init(points: [(t: Double, p: Double)], color: NSColor, width: CGFloat) {
+        self.points = points; self.color = color
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 26))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.quaternaryLabelColor.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        guard points.count >= 2 else { return }
+        let t0 = points[0].t, t1 = points[points.count - 1].t
+        let span = max(t1 - t0, 1)
+        let path = NSBezierPath()
+        for (i, pt) in points.enumerated() {
+            let x = CGFloat((pt.t - t0) / span) * bounds.width
+            let y = CGFloat(min(max(pt.p, 0), 100) / 100) * (bounds.height - 4) + 2
+            if i == 0 { path.move(to: NSPoint(x: x, y: y)) }
+            else { path.line(to: NSPoint(x: x, y: y)) }
+        }
+        path.lineWidth = 1.5
+        color.setStroke()
+        path.stroke()
+    }
+}
+
+final class TrendRowView: NSView {
+    init(icon: String, name: String, pct: Double, caption: String, active: Bool,
+         color: NSColor, points: [(t: Double, p: Double)]) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 78))
+        let W = frame.width
+        let iv = NSImageView(frame: NSRect(x: 16, y: 56, width: 15, height: 15))
+        iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        iv.contentTintColor = color
+        addSubview(iv)
+        let nameField = makeLabel(name, size: 13, weight: .semibold, color: .labelColor)
+        nameField.frame = NSRect(x: 40, y: 55, width: 190, height: 18)
+        addSubview(nameField)
+        if active {
+            let dot = makeLabel("● LIVE", size: 8, weight: .bold, color: color)
+            let w = nameField.attributedStringValue.size().width
+            dot.frame = NSRect(x: 40 + min(w, 190) + 6, y: 58, width: 46, height: 12)
+            addSubview(dot)
+        }
+        let pctField = makeLabel("\(Int(pct))%", size: 14, weight: .bold,
+                                 color: color, align: .right, mono: true)
+        pctField.frame = NSRect(x: W - 74, y: 54, width: 58, height: 20)
+        addSubview(pctField)
+        let spark = SparkView(points: points, color: color, width: W - 40 - 16)
+        spark.frame.origin = NSPoint(x: 40, y: 24)
+        addSubview(spark)
+        let cap = makeLabel(caption, size: 10.5, weight: .regular, color: .secondaryLabelColor)
+        cap.frame = NSRect(x: 40, y: 5, width: W - 56, height: 14)
+        addSubview(cap)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // MARK: - Header
 
 final class HeaderView: NSView {
@@ -240,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.5"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.3.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -336,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.lastLimits = ls
                     self.lastSuccess = Date()
                     self.authState = .ok
+                    UsageHistory.record(ls)
                 } else if errType == "authentication_error" {
                     self.authState = .expired
                 } else if errType == "no_token" {
@@ -425,6 +685,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private func forecastCaption(kind: String, pct: Double, reset: String) -> String {
+        let resetPart = reset.isEmpty ? "" : " · \(reset)"
+        if let eta = UsageHistory.forecast(kind: kind, current: pct) {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "EEE h a"
+            return "at this pace: 100% ≈ \(fmt.string(from: eta))\(resetPart)"
+        }
+        let hasHistory = UsageHistory.series(kind: kind, hours: kind == "session" ? 5 : 72).count >= 2
+        return (hasHistory ? "steady — no runout expected" : "collecting history…") + resetPart
+    }
+
+    /// Tiny ring gauge for the menu-bar button (BarStyle.ring).
+    private func ringImage(pct: Double, color: NSColor) -> NSImage {
+        NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            let c = NSPoint(x: 9, y: 9)
+            let track = NSBezierPath()
+            track.appendArc(withCenter: c, radius: 6.5, startAngle: 0, endAngle: 360)
+            track.lineWidth = 2.5
+            NSColor.tertiaryLabelColor.setStroke()
+            track.stroke()
+            let p = min(max(pct, 0), 100)
+            if p > 0 {
+                let arc = NSBezierPath()
+                arc.appendArc(withCenter: c, radius: 6.5, startAngle: 90,
+                              endAngle: 90 - 360 * CGFloat(p) / 100, clockwise: true)
+                arc.lineWidth = 2.5
+                arc.lineCapStyle = .round
+                color.setStroke()
+                arc.stroke()
+            }
+            return true
+        }
+    }
+
     // MARK: - Rendering (main thread only; no network)
 
     private var freshnessText: String {
@@ -459,6 +753,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let noDataTitle = (authState == .expired || authState == .missing) ? "◐ ⚠︎" : "◐ …"
             statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+            statusItem.button?.image = nil
             let menu = NSMenu()
             menu.delegate = self
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, plan: planName, tier: planTier)
@@ -501,6 +796,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if let warn = authWarningItem() { menu.addItem(warn) }
 
+        let layout = LayoutStyle.current
+        var infos: [(kind: String, label: String, pct: Double, reset: String, active: Bool)] = []
         for l in limits {
             let kind = l["kind"] as? String ?? ""
             let pct = (l["percent"] as? NSNumber)?.doubleValue ?? 0
@@ -517,13 +814,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             default: break
             }
             parts.append(short)
+            infos.append((kind, label, pct, resetsIn(l["resets_at"] as? String), l["is_active"] as? Bool == true))
 
+            if layout == .classic {
+                let item = NSMenuItem()
+                item.view = RowView(icon: iconFor(kind), name: label, pct: pct,
+                                    reset: resetsIn(l["resets_at"] as? String),
+                                    active: (l["is_active"] as? Bool == true),
+                                    color: theme.color(kind: kind, pct: pct))
+                menu.addItem(item)
+            }
+        }
+
+        switch layout {
+        case .classic:
+            break
+        case .rings:
+            let gauges = infos.map { i in
+                (label: i.kind == "session" ? "5h" : String(i.label.dropFirst(9)),
+                 reset: i.reset.replacingOccurrences(of: "resets in ", with: ""),
+                 pct: i.pct,
+                 color: theme.color(kind: i.kind, pct: i.pct))
+            }
             let item = NSMenuItem()
-            item.view = RowView(icon: iconFor(kind), name: label, pct: pct,
-                                reset: resetsIn(l["resets_at"] as? String),
-                                active: (l["is_active"] as? Bool == true),
-                                color: theme.color(kind: kind, pct: pct))
+            item.view = RingsRowView(gauges: gauges)
             menu.addItem(item)
+        case .segments:
+            for i in infos {
+                let item = NSMenuItem()
+                item.view = SegRowView(icon: iconFor(i.kind), name: i.label, pct: i.pct,
+                                       reset: i.reset, active: i.active,
+                                       color: theme.color(kind: i.kind, pct: i.pct))
+                menu.addItem(item)
+            }
+        case .trend:
+            for i in infos {
+                let item = NSMenuItem()
+                item.view = TrendRowView(icon: iconFor(i.kind), name: i.label, pct: i.pct,
+                                         caption: forecastCaption(kind: i.kind, pct: i.pct, reset: i.reset),
+                                         active: i.active,
+                                         color: theme.color(kind: i.kind, pct: i.pct),
+                                         points: UsageHistory.series(kind: i.kind, hours: i.kind == "session" ? 5 : 72))
+                menu.addItem(item)
+            }
         }
 
         let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
@@ -555,6 +888,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else {
                 title = "◐ " + parts.joined(separator: " · ")
             }
+        case .ring:
+            title = ""   // the ring image below is the whole icon
         }
         // Stale data (token lapsed) gets a visible ⚠︎ and loses its color —
         // never let old numbers pass as live.
@@ -567,6 +902,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .foregroundColor: titleColor,
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
         ])
+        if BarStyle.current == .ring {
+            statusItem.button?.image = ringImage(pct: worst, color: titleColor)
+            statusItem.button?.imagePosition = finalTitle.isEmpty ? .imageOnly : .imageLeading
+        } else {
+            statusItem.button?.image = nil
+        }
     }
 
     private func appendFooter(to menu: NSMenu) {
@@ -597,6 +938,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         styleItem.submenu = styleMenu
         menu.addItem(styleItem)
+
+        let layoutItem = NSMenuItem(title: "Layout", action: nil, keyEquivalent: "")
+        layoutItem.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+        let layoutMenu = NSMenu()
+        for s in LayoutStyle.allCases {
+            let it = NSMenuItem(title: s.rawValue, action: #selector(selectLayout(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = s.rawValue
+            it.state = (s == LayoutStyle.current) ? .on : .off
+            layoutMenu.addItem(it)
+        }
+        layoutItem.submenu = layoutMenu
+        menu.addItem(layoutItem)
 
         let refreshMenuItem = NSMenuItem(title: "Auto Refresh", action: nil, keyEquivalent: "")
         refreshMenuItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)
@@ -798,6 +1152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let raw = sender.representedObject as? String, let t = Theme(rawValue: raw) {
             Theme.current = t
             render()   // no network — just recolor from last data
+        }
+    }
+    @objc private func selectLayout(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let s = LayoutStyle(rawValue: raw) {
+            LayoutStyle.current = s
+            render()   // no network — rebuild the menu from cached data
         }
     }
     @objc private func selectStyle(_ sender: NSMenuItem) {
