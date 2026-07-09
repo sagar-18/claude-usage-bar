@@ -167,7 +167,7 @@ final class RowView: NSView {
 // MARK: - Header
 
 final class HeaderView: NSView {
-    init(worst: Double, accent: NSColor, themeSymbol: String, plan: String?) {
+    init(worst: Double, accent: NSColor, themeSymbol: String, plan: String?, tier: String?) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
 
         let iv = NSImageView(frame: NSRect(x: 16, y: 15, width: 22, height: 22))
@@ -181,7 +181,11 @@ final class HeaderView: NSView {
         title.frame = NSRect(x: 46, y: 26, width: 200, height: 20)
         addSubview(title)
 
-        let planText = (plan?.isEmpty == false) ? "\(plan!.capitalized) plan · live" : "Claude · live"
+        var planText = "Claude · live"
+        if let plan = plan, !plan.isEmpty {
+            planText = tier != nil ? "\(plan.capitalized) plan · \(tier!) · live"
+                                   : "\(plan.capitalized) plan · live"
+        }
         let sub = makeLabel(planText, size: 11, weight: .regular,
                             color: .secondaryLabelColor)
         sub.frame = NSRect(x: 46, y: 10, width: 200, height: 14)
@@ -219,6 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var updating = false         // true while `brew` rebuilds in the background
     private var lastSuccess: Date?       // when we last parsed fresh usage data
     private var planName: String?        // subscriptionType from the Keychain ("max", "pro", …)
+    private var planTier: String?        // "20x"/"5x" from rateLimitTier, when present
     private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
@@ -235,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.4"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.5"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -313,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func fetch(_ completion: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let data = self?.runQuery()
-            let plan = self?.readPlan()
+            let plan = self?.readPlan() ?? (nil, nil)
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
@@ -326,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if let p = plan, !p.isEmpty { self.planName = p }
+                if let p = plan.name { self.planName = p; self.planTier = plan.tier }
                 if let ls = parsed {
                     self.lastLimits = ls
                     self.lastSuccess = Date()
@@ -368,12 +373,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return data
     }
 
-    /// Reads subscriptionType ("max", "pro", …) from the same Keychain item as the token.
-    private func readPlan() -> String? {
+    /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
+    /// from rateLimitTier, both from the same Keychain item as the token.
+    private func readPlan() -> (name: String?, tier: String?) {
         let cmd = """
         export PATH=/usr/bin:/bin
         security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
-          | python3 -c 'import sys,json; print(json.load(sys.stdin)["claudeAiOauth"].get("subscriptionType",""))' 2>/dev/null
+          | python3 -c 'import sys,json; d=json.load(sys.stdin)["claudeAiOauth"]; print(d.get("subscriptionType","")); print(d.get("rateLimitTier",""))' 2>/dev/null
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -381,10 +387,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let out = Pipe()
         task.standardOutput = out
         task.standardError = Pipe()
-        do { try task.run() } catch { return nil }
+        do { try task.run() } catch { return (nil, nil) }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = (String(data: data, encoding: .utf8) ?? "")
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        let name = lines.count > 0 && !lines[0].isEmpty ? lines[0] : nil
+        // rateLimitTier looks like "default_claude_max_20x" — surface only the
+        // clean "20x" part, and nothing at all if the format ever changes.
+        var tier: String?
+        if lines.count > 1, let m = lines[1].range(of: #"\d+x$"#, options: .regularExpression) {
+            tier = String(lines[1][m])
+        }
+        return (name, tier)
     }
 
     private func resetsIn(_ iso: String?) -> String {
@@ -446,7 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             let menu = NSMenu()
             menu.delegate = self
-            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, plan: planName)
+            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, plan: planName, tier: planTier)
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
             if let warn = authWarningItem() {
@@ -479,7 +494,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         headerItem.view = HeaderView(worst: worst,
                                      accent: theme.accent(worst: worst, worstKind: worstKind),
                                      themeSymbol: theme.symbol,
-                                     plan: planName)
+                                     plan: planName,
+                                     tier: planTier)
         menu.addItem(headerItem)
         let sep0 = NSMenuItem(); sep0.view = SepView(); menu.addItem(sep0)
 
