@@ -205,13 +205,14 @@ final class SepView: NSView {
 
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
     var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
     private var backoff: TimeInterval = 0
     private var latestVersion: String?   // set when GitHub has a newer release
+    private var lastUpdateCheck: Date?   // throttles the menu-open update check
     private var updating = false         // true while `brew` rebuilds in the background
     private var lastSuccess: Date?       // when we last parsed fresh usage data
 
@@ -248,7 +249,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.backoff = 0
             self?.scheduleNext(3)
+            self?.checkForUpdates()
         }
+    }
+
+    /// A 24h timer alone leaves releases invisible for up to a day (longer with
+    /// sleep, which pauses timers). Also check whenever the menu is opened, at
+    /// most once an hour — the moment the user looks is the moment it matters.
+    func menuWillOpen(_ menu: NSMenu) {
+        if let last = lastUpdateCheck, -last.timeIntervalSinceNow < 3600 { return }
+        checkForUpdates()
     }
 
     // MARK: - Scheduling with exponential backoff (handles the endpoint's 429s)
@@ -394,6 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             let menu = NSMenu()
+            menu.delegate = self
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol)
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
@@ -421,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
         let headerItem = NSMenuItem()
         headerItem.view = HeaderView(worst: worst,
                                      accent: theme.accent(worst: worst, worstKind: worstKind),
@@ -627,6 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkForUpdates(interactive: Bool = false) {
+        lastUpdateCheck = Date()
         var req = URLRequest(url: URL(string: "https://api.github.com/repos/sagar-18/claude-usage-bar/releases/latest")!)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = 10
