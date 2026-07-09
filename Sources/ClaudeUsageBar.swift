@@ -213,6 +213,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var backoff: TimeInterval = 0
     private var latestVersion: String?   // set when GitHub has a newer release
     private var updating = false         // true while `brew` rebuilds in the background
+    private var lastSuccess: Date?       // when we last parsed fresh usage data
+
+    /// Whether the Claude Code OAuth token works. The token lives ~12h and only
+    /// Claude Code can renew it — when it lapses we must say so instead of
+    /// silently showing stale numbers.
+    private enum AuthState { case unknown, ok, expired, missing }
+    private var authState: AuthState = .unknown
     static var refreshMinutes: Int {
         get { let v = UserDefaults.standard.integer(forKey: "refreshMinutes"); return v == 0 ? 5 : v }
         set { UserDefaults.standard.set(newValue, forKey: "refreshMinutes") }
@@ -222,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -232,6 +239,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkForUpdates() }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 24 * 3600, repeats: true) { [weak self] _ in
             self?.checkForUpdates()
+        }
+        // Refetch right after wake — timers sleep with the machine, and the
+        // token often expires overnight; don't sit on stale data until the
+        // next scheduled poll.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.backoff = 0
+            self?.scheduleNext(3)
         }
     }
 
@@ -255,8 +271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func refreshNow() {
         backoff = 0
+        statusItem.button?.appearsDisabled = true   // dim the icon so the click visibly did something
         fetch { [weak self] ok in
             guard let self = self else { return }
+            self.statusItem.button?.appearsDisabled = false
             self.scheduleNext(ok ? self.normalInterval : 60)
         }
     }
@@ -266,14 +284,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let data = self?.runQuery()
             var parsed: [[String: Any]]?
+            var errType = ""
             if let data = data,
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ls = obj["limits"] as? [[String: Any]] {
-                parsed = ls
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let ls = obj["limits"] as? [[String: Any]] {
+                    parsed = ls
+                } else if let err = obj["error"] as? [String: Any] {
+                    errType = err["type"] as? String ?? ""
+                }
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if let ls = parsed { self.lastLimits = ls }
+                if let ls = parsed {
+                    self.lastLimits = ls
+                    self.lastSuccess = Date()
+                    self.authState = .ok
+                } else if errType == "authentication_error" {
+                    self.authState = .expired
+                } else if errType == "no_token" {
+                    self.authState = .missing
+                }
+                // Any other failure (network blip, 429) keeps the prior authState.
                 self.render()
                 completion(parsed != nil)
             }
@@ -287,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         export PATH=/usr/bin:/bin
         TOKEN=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
           | python3 -c 'import sys,json; print(json.load(sys.stdin)["claudeAiOauth"]["accessToken"])' 2>/dev/null)
-        [ -z "$TOKEN" ] && exit 0
+        [ -z "$TOKEN" ] && { echo '{"type":"error","error":{"type":"no_token"}}'; exit 0; }
         curl -s --max-time 8 https://api.anthropic.com/api/oauth/usage \
           -H "Authorization: Bearer $TOKEN" \
           -H "anthropic-beta: oauth-2025-04-20" \
@@ -330,22 +361,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Rendering (main thread only; no network)
 
+    private var freshnessText: String {
+        guard let t = lastSuccess else { return "No data yet" }
+        let secs = Int(-t.timeIntervalSinceNow)
+        if secs < 60 { return "Updated just now" }
+        let m = secs / 60
+        if m < 60 { return "Updated \(m)m ago" }
+        return "Updated \(m / 60)h \(m % 60)m ago"
+    }
+
+    private func authWarningItem() -> NSMenuItem? {
+        let text: String
+        switch authState {
+        case .expired: text = "⚠︎ Sign-in expired — open Claude Code to refresh"
+        case .missing: text = "⚠︎ No Claude Code login — run `claude` and sign in"
+        default: return nil
+        }
+        let it = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        it.isEnabled = false
+        it.attributedTitle = NSAttributedString(string: text, attributes: [
+            .foregroundColor: NSColor.systemOrange,
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        ])
+        return it
+    }
+
     private func render() {
         let theme = Theme.current
 
         guard let limits = lastLimits else {
-            statusItem.button?.attributedTitle = NSAttributedString(string: "◐ …",
+            let noDataTitle = (authState == .expired || authState == .missing) ? "◐ ⚠︎" : "◐ …"
+            statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             let menu = NSMenu()
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol)
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
-            let msg = NSMenuItem(title: "Waiting for usage data…", action: nil, keyEquivalent: "")
-            msg.isEnabled = false
-            menu.addItem(msg)
-            let info = NSMenuItem(title: "Endpoint busy (rate-limited) — retrying automatically", action: nil, keyEquivalent: "")
-            info.isEnabled = false
-            menu.addItem(info)
+            if let warn = authWarningItem() {
+                menu.addItem(warn)
+            } else {
+                let msg = NSMenuItem(title: "Waiting for usage data…", action: nil, keyEquivalent: "")
+                msg.isEnabled = false
+                menu.addItem(msg)
+                let info = NSMenuItem(title: "Endpoint busy (rate-limited) — retrying automatically", action: nil, keyEquivalent: "")
+                info.isEnabled = false
+                menu.addItem(info)
+            }
             appendFooter(to: menu)
             statusItem.menu = menu
             return
@@ -366,6 +427,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      themeSymbol: theme.symbol)
         menu.addItem(headerItem)
         let sep0 = NSMenuItem(); sep0.view = SepView(); menu.addItem(sep0)
+
+        if let warn = authWarningItem() { menu.addItem(warn) }
 
         for l in limits {
             let kind = l["kind"] as? String ?? ""
@@ -392,6 +455,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
 
+        let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
+        fresh.isEnabled = false
+        fresh.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 11),
+        ])
+        menu.addItem(fresh)
+
         appendFooter(to: menu)
         statusItem.menu = menu
 
@@ -413,7 +484,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 title = "◐ " + parts.joined(separator: " · ")
             }
         }
-        statusItem.button?.attributedTitle = NSAttributedString(string: title, attributes: [
+        // Stale data (token lapsed) gets a visible ⚠︎ and loses its color —
+        // never let old numbers pass as live.
+        var finalTitle = title
+        if authState == .expired || authState == .missing {
+            finalTitle = title + " ⚠︎"
+            titleColor = .secondaryLabelColor
+        }
+        statusItem.button?.attributedTitle = NSAttributedString(string: finalTitle, attributes: [
             .foregroundColor: titleColor,
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
         ])
