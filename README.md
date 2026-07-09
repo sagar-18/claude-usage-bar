@@ -23,11 +23,11 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ## Features
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
 - 🎨 **5 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal
-- 📏 **3 menu-bar styles** — Full (`◐ 5h 2% · wk 4% · Fab 8%`), Compact (`◐ 8%`, worst limit), or 5-hour session only (`◐ 5h 2%`) — the narrow styles fit crowded/notched menu bars
+- 📏 **3 menu-bar styles** — 5-hour session only (`◐ 5h 2%`, default), Compact (`◐ 8%`, worst limit), or Full (`◐ 5h 2% · wk 4% · Fab 8%`) — narrow styles fit crowded/notched menu bars
 - ⏱️ **Reset countdowns** per limit
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - ⚠️ **Honest about staleness** — expired Claude Code sign-in shows a `⚠︎` on the icon and a warning row (never stale numbers passing as live), plus an "Updated Xm ago" line and auto-refresh on wake from sleep
-- 🔁 **Launch at Login** toggle (modern `SMAppService`, no LaunchAgents)
+- 🔁 **Launch at Login** — on by default from first run (modern `SMAppService`, no LaunchAgents); toggle it off from the menu anytime
 - ⬆️ **In-app updates** — checks GitHub releases daily; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
 - 🪶 Native Swift/AppKit, ~single file, no dependencies, no telemetry
 
@@ -44,7 +44,7 @@ brew tap sagar-18/claude-usage-bar https://github.com/sagar-18/claude-usage-bar
 brew install --HEAD sagar-18/claude-usage-bar/claude-usage-bar
 claude-usage-bar            # start it (launches detached; survives terminal close)
 ```
-Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Then enable **Launch at Login** from the menu.
+Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Launch at Login is enabled automatically on first run (toggle it from the menu).
 
 To update later: the app checks GitHub daily and shows **"Update to X.Y.Z available…"** in its menu — one click rebuilds via brew and relaunches. Or manually: `brew update && brew reinstall claude-usage-bar`.
 
@@ -55,6 +55,22 @@ cd claude-usage-bar
 ./build.sh
 open ClaudeUsageBar.app
 ```
+
+## Troubleshooting
+
+### Installed it, but no ◐ icon in the menu bar?
+
+The app is almost certainly running fine — macOS is just not showing it. Check in this order:
+
+1. **Confirm it's running.** Open **Activity Monitor** and search for `ClaudeUsageBar` (or run `pgrep -fl ClaudeUsageBar` in a terminal). If it's not there, start it: `claude-usage-bar`.
+2. **If it IS running, your menu bar is out of space.** macOS silently hides menu-bar icons that don't fit — no error, no indicator. This is especially common on **notched MacBooks** (13"/14"/16" M-series), where the notch eats the middle of the bar. Quit or hide a few menu-bar apps you don't need and ◐ will appear.
+3. **Move it somewhere safer.** Hold **⌘ (Command) and drag** the ◐ icon to the right, near the clock — when space runs out, macOS drops the left-most status icons first, so right = priority.
+4. **Fullscreen hides everything.** If the frontmost app is fullscreen, the entire menu bar (and every icon) is hidden — move the pointer to the top of the screen or exit fullscreen.
+5. **Still cramped?** A menu-bar manager like [Ice](https://github.com/jordanbaird/Ice) (free, `brew install --cask jordanbaird-ice`) or Bartender lets you pin ◐ and tuck the rest away. Also try a narrower style: ◐ menu → **Menu Bar Style** (the default is the narrow *5-hour session only*).
+
+### Numbers look stale / icon shows ⚠︎?
+
+Your Claude Code sign-in token expired (it lives ~12h and only Claude Code can renew it). Open a terminal, run `claude`, let it load, then click **Refresh now** in the ◐ menu.
 
 ## Privacy
 - Reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself).

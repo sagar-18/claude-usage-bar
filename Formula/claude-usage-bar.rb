@@ -2,7 +2,7 @@ class ClaudeUsageBar < Formula
   desc "Unofficial macOS menu-bar tracker for Claude Max/Pro usage"
   homepage "https://github.com/sagar-18/claude-usage-bar"
   license "MIT"
-  version "1.2.1"
+  version "1.2.2"
 
   # Builds from source (locally compiled → no Gatekeeper quarantine, no signing needed).
   head "https://github.com/sagar-18/claude-usage-bar.git", branch: "main"
@@ -27,7 +27,11 @@ class ClaudeUsageBar < Formula
     <<~EOS
       ▸ Start it:      claude-usage-bar
         or open:       open "#{opt_prefix}/ClaudeUsageBar.app"
-      ▸ Then enable "Launch at Login" from the menu-bar dropdown.
+      ▸ Launch at Login is enabled automatically on first run
+        (toggle it from the menu-bar dropdown).
+      ▸ No ◐ icon? Your menu bar is likely full (macOS hides icons that
+        don't fit, especially around the notch) — see Troubleshooting in
+        the README. Cmd-drag the icon to the right, near the clock.
 
       Requires an existing Claude Code login — run `claude` once and sign in.
       The app reads your token from the Keychain; it never asks for credentials.

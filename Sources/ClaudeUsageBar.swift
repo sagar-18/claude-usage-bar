@@ -76,8 +76,10 @@ enum BarStyle: String, CaseIterable {
     case compact = "Compact (worst limit)"
     case session = "5-hour session only"
 
+    // Narrow default: crowded/notched menu bars silently hide wide items, and a
+    // hidden icon looks like a broken install to a first-time user.
     static var current: BarStyle {
-        get { BarStyle(rawValue: UserDefaults.standard.string(forKey: "barStyle") ?? "") ?? .full }
+        get { BarStyle(rawValue: UserDefaults.standard.string(forKey: "barStyle") ?? "") ?? .session }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "barStyle") }
     }
 }
@@ -230,11 +232,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.1"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2.2"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "◐ …"
+        // Enable Launch at Login on first run only — a menu-bar tracker is
+        // pointless if it dies on reboot. One-shot so a user's later opt-out sticks.
+        if #available(macOS 13.0, *), !UserDefaults.standard.bool(forKey: "didDefaultLoginItem") {
+            UserDefaults.standard.set(true, forKey: "didDefaultLoginItem")
+            if SMAppService.mainApp.status == .notRegistered {
+                try? SMAppService.mainApp.register()
+            }
+        }
         tick()
         // Check for updates shortly after launch, then daily.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkForUpdates() }
