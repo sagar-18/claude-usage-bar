@@ -318,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func fetch(_ completion: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let data = self?.runQuery()
-            let plan = self?.readPlan() ?? (nil, nil)
+            let plan = self?.readPlan() ?? (name: nil, tier: nil)
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
