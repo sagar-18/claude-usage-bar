@@ -22,8 +22,9 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 
 ## Features
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
-- 🎨 **5 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal
-- 📏 **3 menu-bar styles** — 5-hour session only (`◐ 5h 2%`, default), Compact (`◐ 8%`, worst limit), or Full (`◐ 5h 2% · wk 4% · Fab 8%`) — narrow styles fit crowded/notched menu bars
+- 🎨 **9 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal, Catppuccin, Nord, Dracula, Terminal
+- 🧩 **4 dropdown layouts** — Classic (default), Rings (Apple Watch-style gauges), Segments (threshold-marked cells), Trend + forecast ("at this pace: 100% ≈ Sat 2 PM", from locally kept history)
+- 📏 **4 menu-bar styles** — 5-hour session only (`◐ 5h 2%`, default), Compact (`◐ 8%`, worst limit), Full (`◐ 5h 2% · wk 4% · Fab 8%`), or a tiny Ring icon (~18px) — narrow styles fit crowded/notched menu bars
 - ⏱️ **Reset countdowns** per limit
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - ⚠️ **Honest about staleness** — expired Claude Code sign-in shows a `⚠︎` on the icon and a warning row (never stale numbers passing as live), plus an "Updated Xm ago" line and auto-refresh on wake from sleep
