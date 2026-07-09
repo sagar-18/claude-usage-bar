@@ -5,7 +5,7 @@ set -euo pipefail
 
 OUT="${1:-.}"
 APP="$OUT/ClaudeUsageBar.app"
-VERSION="1.2.3"
+VERSION="1.2.4"
 
 DIR="$(dirname "$0")"
 
