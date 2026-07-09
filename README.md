@@ -26,6 +26,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 - 📏 **3 menu-bar styles** — Full (`◐ 5h 2% · wk 4% · Fab 8%`), Compact (`◐ 8%`, worst limit), or 5-hour session only (`◐ 5h 2%`) — the narrow styles fit crowded/notched menu bars
 - ⏱️ **Reset countdowns** per limit
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
+- ⚠️ **Honest about staleness** — expired Claude Code sign-in shows a `⚠︎` on the icon and a warning row (never stale numbers passing as live), plus an "Updated Xm ago" line and auto-refresh on wake from sleep
 - 🔁 **Launch at Login** toggle (modern `SMAppService`, no LaunchAgents)
 - ⬆️ **In-app updates** — checks GitHub releases daily; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
 - 🪶 Native Swift/AppKit, ~single file, no dependencies, no telemetry
