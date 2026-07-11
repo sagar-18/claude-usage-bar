@@ -628,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let mainMenu = NSMenu()
     private var menuIsOpen = false
     private var inSettings = false
+    private var pendingRerender = false
     private weak var settingsSubmenuItem: NSMenuItem?
     var timer: Timer?
     var updateTimer: Timer?
@@ -698,6 +699,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         if menu === mainMenu { menuIsOpen = false }
         inSettings = false
+        // A setting changed while the panel was open — rebuild the dropdown so
+        // themed colors / layout apply. If the settings submenu just closed but
+        // the main menu is still open, this updates the visible rows live; if
+        // the whole menu closed, it's ready for the next open.
+        if pendingRerender {
+            pendingRerender = false
+            render()
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -1383,7 +1392,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             b.onPick = { [weak self] v in
                 apply(v)
                 restyle()
-                self?.updateStatusTitle()   // live feedback in the menu bar
+                self?.updateStatusTitle()      // live feedback in the menu bar
+                self?.pendingRerender = true   // rebuild the dropdown rows on return
             }
             buttons.append(b)
             let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
@@ -1443,7 +1453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 attributes: [.font: NSFont.menuFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
         }
         loginBtn.onPick = { [weak self] _ in
-            self?.toggleLogin()
+            self?.toggleLoginQuiet()
             styleLogin()
         }
         styleLogin()
@@ -1502,6 +1512,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
     @objc private func toggleLogin() {
+        toggleLoginQuiet()
+        render()
+    }
+
+    /// Toggle without a render() — for the live settings panel, where render
+    /// would yank the open submenu out from under the user.
+    private func toggleLoginQuiet() {
         guard #available(macOS 13.0, *) else { return }
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -1515,7 +1532,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.informativeText = "\(error.localizedDescription)\n\nOn managed/corporate Macs this may be restricted by device policy."
             a.runModal()
         }
-        render()
     }
 
     // MARK: - Updates (GitHub releases check + one-click `brew` upgrade)
