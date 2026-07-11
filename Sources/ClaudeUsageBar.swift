@@ -1013,9 +1013,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 activityItems(act).forEach { menu.addItem($0) }
                 title = "\(glyph) \(tokenText(act.todayTokens))"
             }
-            let info = NSMenuItem()
-            info.view = CaptionView("No personal rate limits — usage is metered at the workspace level")
-            menu.addItem(info)
+            if codexActivity == nil {
+                // Only when there's nothing at all to show.
+                let info = NSMenuItem()
+                info.view = CaptionView("No usage data reported for this account")
+                menu.addItem(info)
+            }
             appendFooter(to: menu)
             statusItem.menu = menu
             freshItem = nil
