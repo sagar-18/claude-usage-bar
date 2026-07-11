@@ -1,5 +1,15 @@
 # Claude Usage Bar
 
+> [!NOTE]
+> ## 🏁 This project has moved → [**AIdometer**](https://github.com/sagar-18/AIdometer)
+> Renamed when it outgrew tracking only Claude (it now tracks OpenAI Codex too) — and to end the name clash with an unrelated app. **All development continues at [sagar-18/AIdometer](https://github.com/sagar-18/AIdometer).** Existing installs keep working, but won't receive new features; to migrate:
+> ```bash
+> brew uninstall claude-usage-bar && brew untap sagar-18/claude-usage-bar
+> brew tap sagar-18/aidometer https://github.com/sagar-18/AIdometer
+> brew install --HEAD sagar-18/aidometer/aidometer
+> ```
+
+
 A tiny, beautiful **macOS menu-bar tracker** for your **Claude** *and* **OpenAI Codex** usage — session, weekly, and scoped limits live in your menu bar, with color-coded themes and a one-click switch between providers.
 
 ```
