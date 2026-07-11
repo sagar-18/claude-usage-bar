@@ -1,12 +1,13 @@
 # Claude Usage Bar
 
-A tiny, beautiful **macOS menu-bar tracker** for your **Claude Max/Pro** usage — 5-hour session, weekly (all models), and weekly (scoped model) limits, live in your menu bar with color-coded themes.
+A tiny, beautiful **macOS menu-bar tracker** for your **Claude** *and* **OpenAI Codex** usage — session, weekly, and scoped limits live in your menu bar, with color-coded themes and a one-click switch between providers.
 
 ```
-◐ 5h 2% · wk 4% · Fab 8%
+◐ 5h 2% · wk 4% · Fab 8%      (Claude)
+⬡ 5h 12% · wk 34%             (Codex)
 ```
 
-Click it for a full breakdown: per-limit progress bars, reset countdowns, and the active limit.
+Click it for a full breakdown: per-limit progress bars, reset countdowns, the active limit, and Codex token/turn activity. Switch between Claude (◐) and Codex (⬡) with the brand-mark toggle in the header — no config, it just reads the logins you already have.
 
 ---
 
@@ -50,7 +51,7 @@ claude-usage-bar            # start it (launches detached; survives terminal clo
 ```
 Everything lives in this one repo — the [formula](Formula/claude-usage-bar.rb) ships right here in `Formula/`, and `brew tap` points at this repo directly (no separate `homebrew-tap` repo). Launch at Login is enabled automatically on first run (toggle it from the menu).
 
-To update later: the app checks GitHub daily and shows **"Update to X.Y.Z available…"** in its menu — one click rebuilds via brew and relaunches. Or manually: `brew update && brew reinstall claude-usage-bar`.
+To update later: the app checks GitHub automatically (on launch, when you open the menu, and on wake) and flags a new release with a blue **↑** on the menu-bar icon plus an **"Update to X.Y.Z available…"** row — one click rebuilds via brew and relaunches. Or manually: `brew update && brew reinstall claude-usage-bar`.
 
 ### Manual
 ```bash
@@ -74,7 +75,11 @@ The app is almost certainly running fine — macOS is just not showing it. Check
 
 ### Numbers look stale / icon shows ⚠︎?
 
-Your Claude Code sign-in token expired (it lives ~12h and only Claude Code can renew it). Open a terminal, run `claude`, let it load, then click **Refresh now** in the ◐ menu.
+Your sign-in token expired (tokens live ~12h and only the CLI that created them can renew). Open a terminal and run `claude` (for Claude) or `codex` (for Codex), let it load, then click **Refresh now** in the menu.
+
+### On Codex, the dropdown shows token activity instead of percentage bars?
+
+That's expected on **Business/Enterprise** seats — OpenAI meters those centrally and exposes no personal rate-limit windows (its own `/status` shows nothing either). The app falls back to showing your **token & turn activity** (Today / Last 7 days) from the analytics API. **Plus, Pro, and Go** accounts get the normal percentage bars.
 
 ## Privacy
 - Claude: reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself) and talks only to `api.anthropic.com`.
