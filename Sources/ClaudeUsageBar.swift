@@ -1,4 +1,5 @@
 import Cocoa
+import QuartzCore
 import ServiceManagement
 
 // MARK: - Color helpers
@@ -605,6 +606,11 @@ final class SepView: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
+    /// One persistent menu whose items are swapped in place — this is what lets
+    /// the open menu update live (refresh in place, settings drill-down).
+    private let mainMenu = NSMenu()
+    private var menuIsOpen = false
+    private var inSettings = false
     var timer: Timer?
     var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
@@ -639,6 +645,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "◐ …"
+        mainMenu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
+        mainMenu.delegate = self
+        statusItem.menu = mainMenu
         // Enable Launch at Login on first run only — a menu-bar tracker is
         // pointless if it dies on reboot. One-shot so a user's later opt-out sticks.
         if #available(macOS 13.0, *), !UserDefaults.standard.bool(forKey: "didDefaultLoginItem") {
@@ -668,7 +677,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A 24h timer alone leaves releases invisible for up to a day (longer with
     /// sleep, which pauses timers). Also check whenever the menu is opened, at
     /// most once an hour — the moment the user looks is the moment it matters.
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === mainMenu else { return }
+        menuIsOpen = false
+        if inSettings {
+            inSettings = false
+            DispatchQueue.main.async { [weak self] in self?.render() }   // reset to main view for next open
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        if menu === mainMenu { menuIsOpen = true }
         // The freshness label is baked in at render time, which happens right
         // after each successful fetch — left alone it would read "just now"
         // forever. Re-stamp it with the real age at the moment of opening.
@@ -1053,6 +1072,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render() {
+        // Don't yank the settings view out from under the user mid-browse.
+        if inSettings && menuIsOpen { return }
+        let menu = mainMenu
+        menu.removeAllItems()
         let theme = Theme.current
 
         let glyph = Provider.current.glyph
@@ -1061,9 +1084,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             statusItem.button?.image = nil
-            let menu = NSMenu()
-            menu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
-            menu.delegate = self
             let other: Provider = Provider.current == .claude ? .codex : .claude
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchIcon: other.markImage, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
             menu.addItem(h)
@@ -1079,7 +1099,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 menu.addItem(info)
             }
             appendFooter(to: menu)
-            statusItem.menu = menu
             freshLine = nil   // this menu has no freshness row
             return
         }
@@ -1092,9 +1111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if p > worst { worst = p; worstKind = l["kind"] as? String ?? "" }
         }
 
-        let menu = NSMenu()
-        menu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
-        menu.delegate = self
         let headerItem = NSMenuItem()
         let other: Provider = Provider.current == .claude ? .codex : .claude
         headerItem.view = HeaderView(worst: worst,
@@ -1133,7 +1149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(fresh)
             freshLine = line
             appendFooter(to: menu)
-            statusItem.menu = menu
             statusItem.button?.attributedTitle = NSAttributedString(string: title,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor,
                              .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)])
@@ -1224,7 +1239,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         freshLine = line
 
         appendFooter(to: menu)
-        statusItem.menu = menu
 
         // Menu-bar title per the user's chosen style. Narrower styles help on
         // notched MacBooks, where a crowded menu bar silently hides wide items.
@@ -1372,7 +1386,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu?.cancelTracking()
     }
     @objc private func stripRefresh(_ sender: NSButton) {
-        closeMenu(from: sender)
+        // Keep the menu open: spin the icon while fetching. The live item swap
+        // on completion replaces the strip, which naturally ends the spin.
+        sender.wantsLayer = true
+        if let layer = sender.layer {
+            layer.position = CGPoint(x: layer.frame.midX, y: layer.frame.midY)
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.toValue = -2 * Double.pi
+            spin.duration = 0.8
+            spin.repeatCount = .infinity
+            layer.add(spin, forKey: "spin")
+        }
         refreshNow()
     }
     @objc private func stripAbout(_ sender: NSButton) {
@@ -1384,13 +1409,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openUsage()
     }
     @objc private func showSettingsMenu(_ sender: NSButton) {
-        closeMenu(from: sender)
-        let m = makeSettingsMenu()
-        // Give the closing menu a beat to end its tracking session, or the
-        // popup gets swallowed by it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-        }
+        // Drill into settings inside the same open menu.
+        inSettings = true
+        mainMenu.removeAllItems()
+        let back = NSMenuItem(title: "‹ Back", action: #selector(backToMain), keyEquivalent: "")
+        back.target = self
+        mainMenu.addItem(back)
+        let s = NSMenuItem(); s.view = SepView(); mainMenu.addItem(s)
+        let settings = makeSettingsMenu()
+        let items = settings.items
+        settings.removeAllItems()   // detach so they can join mainMenu
+        items.forEach { mainMenu.addItem($0) }
+    }
+    @objc private func backToMain() {
+        inSettings = false
+        render()
     }
 
     // MARK: - Launch at Login (SMAppService — uses modern Login Items, not the EDR-locked LaunchAgents dir)
