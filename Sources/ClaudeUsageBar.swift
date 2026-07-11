@@ -494,7 +494,8 @@ final class CaptionView: NSView {
 // MARK: - Header
 
 final class HeaderView: NSView {
-    init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String) {
+    init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String,
+         switchGlyph: String, switchHint: String, target: AnyObject?, action: Selector?) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
 
         let iv = NSImageView(frame: NSRect(x: 16, y: 15, width: 22, height: 22))
@@ -513,10 +514,17 @@ final class HeaderView: NSView {
         sub.frame = NSRect(x: 46, y: 10, width: 200, height: 14)
         addSubview(sub)
 
-        let status = worst >= 90 ? "CRITICAL" : worst >= 70 ? "HIGH" : worst >= 40 ? "MODERATE" : "HEALTHY"
-        let pill = makeLabel(status, size: 9, weight: .heavy, color: accent, align: .right)
-        pill.frame = NSRect(x: frame.width - 116, y: 19, width: 100, height: 14)
-        addSubview(pill)
+        // Provider toggle: shows the OTHER provider's glyph; one click switches.
+        let btn = NSButton(frame: NSRect(x: frame.width - 48, y: 12, width: 32, height: 28))
+        btn.isBordered = false
+        btn.attributedTitle = NSAttributedString(string: switchGlyph, attributes: [
+            .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        btn.target = target
+        btn.action = action
+        btn.toolTip = switchHint
+        addSubview(btn)
     }
     required init?(coder: NSCoder) { fatalError() }
 }
@@ -997,7 +1005,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.image = nil
             let menu = NSMenu()
             menu.delegate = self
-            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle)
+            let other: Provider = Provider.current == .claude ? .codex : .claude
+            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
             if let warn = authWarningItem() {
@@ -1027,11 +1036,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         let headerItem = NSMenuItem()
+        let other: Provider = Provider.current == .claude ? .codex : .claude
         headerItem.view = HeaderView(worst: worst,
                                      accent: theme.accent(worst: worst, worstKind: worstKind),
                                      themeSymbol: theme.symbol,
                                      title: Provider.current.appTitle,
-                                     subtitle: headerSubtitle)
+                                     subtitle: headerSubtitle,
+                                     switchGlyph: other.glyph,
+                                     switchHint: "Switch to \(other.rawValue)",
+                                     target: self,
+                                     action: #selector(toggleProvider))
         menu.addItem(headerItem)
         let sep0 = NSMenuItem(); sep0.view = SepView(); menu.addItem(sep0)
 
@@ -1188,19 +1202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func appendFooter(to menu: NSMenu) {
         let sep = NSMenuItem(); sep.view = SepView(); menu.addItem(sep)
-
-        let providerItem = NSMenuItem(title: "Provider", action: nil, keyEquivalent: "")
-        providerItem.image = NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)
-        let providerMenu = NSMenu()
-        for p in Provider.allCases {
-            let it = NSMenuItem(title: p.rawValue, action: #selector(selectProvider(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = p.rawValue
-            it.state = (p == Provider.current) ? .on : .off
-            providerMenu.addItem(it)
-        }
-        providerItem.submenu = providerMenu
-        menu.addItem(providerItem)
 
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         themeItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
@@ -1444,10 +1445,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             render()   // no network — just recolor from last data
         }
     }
-    @objc private func selectProvider(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let p = Provider(rawValue: raw), p != Provider.current else { return }
-        Provider.current = p
+    @objc private func toggleProvider() {
+        statusItem.menu?.cancelTracking()   // close the open menu before rebuilding it
+        Provider.current = Provider.current == .claude ? .codex : .claude
         // The cached data belongs to the other provider — drop it and refetch.
         lastLimits = nil
         lastSuccess = nil
