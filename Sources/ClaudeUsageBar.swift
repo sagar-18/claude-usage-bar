@@ -515,12 +515,25 @@ final class FreshLineView: NSView {
 }
 
 // Footer icon strip: refresh · settings · about · quit
+// Button that also fires a handler on mouse-hover (used for the gear, so it
+// opens settings on hover as well as click — and ONLY the gear does).
+final class HoverButton: NSButton {
+    var onHover: (() -> Void)?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with e: NSEvent) { onHover?() }
+}
+
 final class FooterStripView: NSView {
-    init(buttons: [(symbol: String, hint: String, action: Selector)], target: AnyObject) {
+    init(buttons: [(symbol: String, hint: String, action: Selector, hover: (() -> Void)?)], target: AnyObject) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 38))
         let slot = (frame.width - 32) / CGFloat(buttons.count)
         for (i, b) in buttons.enumerated() {
-            let btn = NSButton(frame: NSRect(x: 16 + slot * CGFloat(i) + slot / 2 - 14, y: 5, width: 28, height: 28))
+            let btn = HoverButton(frame: NSRect(x: 16 + slot * CGFloat(i) + slot / 2 - 14, y: 5, width: 28, height: 28))
             btn.isBordered = false
             btn.image = NSImage(systemSymbolName: b.symbol, accessibilityDescription: b.hint)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .medium))
@@ -529,27 +542,11 @@ final class FooterStripView: NSView {
             btn.target = target
             btn.action = b.action
             btn.toolTip = b.hint
+            btn.onHover = b.hover
             addSubview(btn)
         }
     }
     required init?(coder: NSCoder) { fatalError() }
-}
-
-// Option row button for settings submenus: clicks don't dismiss the menu,
-// so the user can flip through options and watch changes apply live.
-final class OptionButton: NSButton {
-    var value = ""
-    var onPick: ((String) -> Void)?
-    @objc private func firePick() { onPick?(value) }
-    static func make(value: String, width: CGFloat) -> OptionButton {
-        let b = OptionButton(frame: NSRect(x: 0, y: 0, width: width, height: 24))
-        b.isBordered = false
-        b.alignment = .left
-        b.value = value
-        b.target = b
-        b.action = #selector(firePick)
-        return b
-    }
 }
 
 // A fixed-width caption line, so long text can't stretch the whole menu.
@@ -562,6 +559,45 @@ final class CaptionView: NSView {
         addSubview(l)
     }
     required init?(coder: NSCoder) { fatalError() }
+}
+
+// Option row for settings submenus. Draws its own hover highlight + checkmark
+// (custom menu-item views don't get the native blue highlight automatically),
+// and a click does NOT dismiss the menu — so options can be flipped through
+// while watching the change apply live.
+final class HoverRow: NSView {
+    let value: String
+    var onPick: ((String) -> Void)?
+    var isChecked: () -> Bool = { false }
+    private var hovered = false
+    init(value: String, width: CGFloat) {
+        self.value = value
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 22))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with e: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with e: NSEvent) { hovered = false; needsDisplay = true }
+    override func mouseUp(with e: NSEvent) { onPick?(value) }
+    override func draw(_ dirtyRect: NSRect) {
+        if hovered {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 5, yRadius: 5).fill()
+        }
+        let color: NSColor = hovered ? .white : .labelColor
+        let font = NSFont.menuFont(ofSize: 13)
+        if isChecked() {
+            ("✓" as NSString).draw(at: NSPoint(x: 14, y: 3),
+                withAttributes: [.font: font, .foregroundColor: color])
+        }
+        (value as NSString).draw(at: NSPoint(x: 32, y: 3),
+            withAttributes: [.font: font, .foregroundColor: color])
+    }
 }
 
 // MARK: - Header
@@ -630,7 +666,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var inSettings = false
     private var pendingRerender = false
     private var contentCount = 0   // number of leading content items (before the footer)
-    private weak var settingsSubmenuItem: NSMenuItem?
+    private weak var settingsStripItem: NSMenuItem?   // the footer strip (gear attaches settings to it)
     var timer: Timer?
     var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
@@ -660,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1377,30 +1413,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
 
-        // 4-icon strip. The gear opens the settings submenu BESIDE the menu:
-        // the strip row carries the submenu, so macOS opens it natively (auto
-        // left/right) — reliable, unlike popUp from inside a tracking menu.
+        // One strip: ↻ ⓘ ⏻ ⚙. The settings submenu is attached to the row ONLY
+        // while the pointer is over the gear — menu tracking re-checks the
+        // highlighted item's submenu continuously, so attaching mid-hover opens
+        // the panel to the side, and detaching on the other icons keeps them
+        // from ever triggering it.
         let sub = makeSettingsMenu()
         sub.delegate = self
         let strip = NSMenuItem()
-        let stripView = FooterStripView(buttons: [
-            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
-            (symbol: "gearshape", hint: "Settings", action: #selector(openSettingsSubmenu(_:))),
-            (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
-            (symbol: "power", hint: "Quit", action: #selector(quit)),
+        let attach: () -> Void = { [weak strip] in strip?.submenu = sub }
+        let detach: () -> Void = { [weak strip] in strip?.submenu = nil }
+        strip.view = FooterStripView(buttons: [
+            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:)), hover: detach),
+            (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:)), hover: detach),
+            (symbol: "power", hint: "Quit", action: #selector(quit), hover: detach),
+            (symbol: "gearshape", hint: "Settings", action: #selector(gearClicked(_:)), hover: attach),
         ], target: self)
-        strip.view = stripView
-        strip.submenu = sub
-        settingsSubmenuItem = strip
         menu.addItem(strip)
+        settingsStripItem = strip
     }
 
-    /// The gear button highlights the strip row, which makes macOS open its
-    /// attached submenu to the side — the same mechanism as hovering it.
-    @objc private func openSettingsSubmenu(_ sender: NSButton) {
-        guard let item = settingsSubmenuItem, let menu = item.menu else { return }
-        let idx = menu.index(of: item)
-        if idx >= 0 { menu.performActionForItem(at: idx) }
+    /// Gear click: make sure the submenu is attached (hover normally already
+    /// did this; the open then follows from the row being highlighted).
+    @objc private func gearClicked(_ sender: NSButton) {
+        guard let strip = settingsStripItem, strip.submenu == nil else { return }
+        let sub = makeSettingsMenu()
+        sub.delegate = self
+        strip.submenu = sub
     }
 
     /// A submenu of view-based option rows: picking one does NOT dismiss the
@@ -1409,32 +1448,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              apply: @escaping (String) -> Void) -> NSMenu {
         let m = NSMenu()
         m.autoenablesItems = false
-        var buttons: [OptionButton] = []
-        func restyle() {
-            for b in buttons {
-                let on = b.value == current()
-                b.attributedTitle = NSAttributedString(string: (on ? "✓  " : "     ") + b.value, attributes: [
-                    .font: NSFont.menuFont(ofSize: 13),
-                    .foregroundColor: NSColor.labelColor,
-                ])
-            }
-        }
         for value in options {
-            let b = OptionButton.make(value: value, width: 190)
-            b.onPick = { [weak self] v in
+            let row = HoverRow(value: value, width: 200)
+            row.isChecked = { value == current() }
+            row.onPick = { [weak self, weak row] v in
                 apply(v)
-                restyle()
+                // Move the checkmark: redraw every sibling row.
+                (row?.enclosingMenuItem?.menu?.items ?? []).forEach { ($0.view as? HoverRow)?.needsDisplay = true }
                 self?.liveUpdateContent()   // rebuild rows in place — instant, panel stays open
             }
-            buttons.append(b)
-            let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
-            b.frame = NSRect(x: 12, y: 0, width: 190, height: 24)
-            wrap.addSubview(b)
             let item = NSMenuItem()
-            item.view = wrap
+            item.view = row
             m.addItem(item)
         }
-        restyle()
         return m
     }
 
@@ -1475,22 +1501,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             })))
 
         // Launch at Login: view-based toggle so the menu stays open.
-        let loginWrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
-        let loginBtn = OptionButton.make(value: "Launch at Login", width: 190)
-        loginBtn.frame = NSRect(x: 12, y: 0, width: 190, height: 24)
-        let styleLogin = { [weak self] in
-            loginBtn.attributedTitle = NSAttributedString(
-                string: ((self?.loginEnabled ?? false) ? "✓  " : "     ") + "Launch at Login",
-                attributes: [.font: NSFont.menuFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-        }
-        loginBtn.onPick = { [weak self] _ in
+        let loginRow = HoverRow(value: "Launch at Login", width: 200)
+        loginRow.isChecked = { [weak self] in self?.loginEnabled ?? false }
+        loginRow.onPick = { [weak self, weak loginRow] _ in
             self?.toggleLoginQuiet()
-            styleLogin()
+            loginRow?.needsDisplay = true
         }
-        styleLogin()
-        loginWrap.addSubview(loginBtn)
         let loginItem = NSMenuItem()
-        loginItem.view = loginWrap
+        loginItem.view = loginRow
         menu.addItem(loginItem)
 
         let updatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
