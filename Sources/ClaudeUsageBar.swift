@@ -628,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let mainMenu = NSMenu()
     private var menuIsOpen = false
     private var inSettings = false
+    private weak var settingsSubmenuItem: NSMenuItem?
     var timer: Timer?
     var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
@@ -1335,22 +1336,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
 
-        // Settings as a native submenu row — the only reliable way macOS opens
-        // a panel BESIDE the menu (auto left/right) while usage stays visible.
-        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
-        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        // 4-icon strip. The gear opens the settings submenu BESIDE the menu:
+        // the strip row carries the submenu, so macOS opens it natively (auto
+        // left/right) — reliable, unlike popUp from inside a tracking menu.
         let sub = makeSettingsMenu()
         sub.delegate = self
-        settingsItem.submenu = sub
-        menu.addItem(settingsItem)
-
         let strip = NSMenuItem()
-        strip.view = FooterStripView(buttons: [
+        let stripView = FooterStripView(buttons: [
             (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
+            (symbol: "gearshape", hint: "Settings", action: #selector(openSettingsSubmenu(_:))),
             (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
             (symbol: "power", hint: "Quit", action: #selector(quit)),
         ], target: self)
+        strip.view = stripView
+        strip.submenu = sub
+        settingsSubmenuItem = strip
         menu.addItem(strip)
+    }
+
+    /// The gear button highlights the strip row, which makes macOS open its
+    /// attached submenu to the side — the same mechanism as hovering it.
+    @objc private func openSettingsSubmenu(_ sender: NSButton) {
+        guard let item = settingsSubmenuItem, let menu = item.menu else { return }
+        let idx = menu.index(of: item)
+        if idx >= 0 { menu.performActionForItem(at: idx) }
     }
 
     /// A submenu of view-based option rows: picking one does NOT dismiss the
