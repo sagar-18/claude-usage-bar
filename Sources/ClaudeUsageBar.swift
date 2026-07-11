@@ -61,6 +61,7 @@ enum Theme: String, CaseIterable {
             case "session":       return rgb(0.231,0.510,0.965)
             case "weekly_all":    return rgb(0.545,0.361,0.965)
             case "weekly_scoped": return rgb(0.976,0.451,0.086)
+            case "monthly":       return rgb(0.545,0.361,0.965)
             default:              return rgb(0.392,0.455,0.545)
             }
         case .mono:
@@ -105,6 +106,24 @@ enum BarStyle: String, CaseIterable {
     }
 }
 
+// MARK: - Provider
+
+enum Provider: String, CaseIterable {
+    case claude = "Claude"
+    case codex  = "Codex"
+
+    static var current: Provider {
+        get { Provider(rawValue: UserDefaults.standard.string(forKey: "provider") ?? "") ?? .claude }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "provider") }
+    }
+    var glyph: String { self == .codex ? "⬡" : "◐" }
+    var appTitle: String { self == .codex ? "Codex Usage" : "Claude Usage" }
+    var usageURL: String {
+        self == .codex ? "https://chatgpt.com/codex/settings/usage"
+                       : "https://claude.ai/settings/usage"
+    }
+}
+
 // MARK: - Dropdown layout
 
 enum LayoutStyle: String, CaseIterable {
@@ -122,8 +141,13 @@ enum LayoutStyle: String, CaseIterable {
 // MARK: - Usage history (persisted locally; feeds the Trend layout's forecast)
 
 enum UsageHistory {
+    // Per-provider buckets so switching providers doesn't blend the curves.
+    private static var key: String {
+        Provider.current == .codex ? "usageHistory-codex" : "usageHistory"
+    }
+
     static func record(_ limits: [[String: Any]]) {
-        var arr = (UserDefaults.standard.array(forKey: "usageHistory") as? [[String: Any]]) ?? []
+        var arr = (UserDefaults.standard.array(forKey: key) as? [[String: Any]]) ?? []
         let now = Date().timeIntervalSince1970
         for l in limits {
             guard let kind = l["kind"] as? String else { continue }
@@ -132,11 +156,11 @@ enum UsageHistory {
         }
         let cutoff = now - 7 * 24 * 3600
         arr = arr.filter { (($0["t"] as? Double) ?? 0) >= cutoff }
-        UserDefaults.standard.set(arr, forKey: "usageHistory")
+        UserDefaults.standard.set(arr, forKey: key)
     }
 
     static func series(kind: String, hours: Double) -> [(t: Double, p: Double)] {
-        let arr = (UserDefaults.standard.array(forKey: "usageHistory") as? [[String: Any]]) ?? []
+        let arr = (UserDefaults.standard.array(forKey: key) as? [[String: Any]]) ?? []
         let cutoff = Date().timeIntervalSince1970 - hours * 3600
         return arr.compactMap { e -> (t: Double, p: Double)? in
             guard let t = e["t"] as? Double, t >= cutoff,
@@ -426,7 +450,7 @@ final class TrendRowView: NSView {
 // MARK: - Header
 
 final class HeaderView: NSView {
-    init(worst: Double, accent: NSColor, themeSymbol: String, plan: String?, tier: String?) {
+    init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
 
         let iv = NSImageView(frame: NSRect(x: 16, y: 15, width: 22, height: 22))
@@ -436,16 +460,11 @@ final class HeaderView: NSView {
         iv.contentTintColor = accent
         addSubview(iv)
 
-        let title = makeLabel("Claude Usage", size: 15, weight: .bold, color: .labelColor)
-        title.frame = NSRect(x: 46, y: 26, width: 200, height: 20)
-        addSubview(title)
+        let titleField = makeLabel(title, size: 15, weight: .bold, color: .labelColor)
+        titleField.frame = NSRect(x: 46, y: 26, width: 200, height: 20)
+        addSubview(titleField)
 
-        var planText = "Claude · live"
-        if let plan = plan, !plan.isEmpty {
-            planText = tier != nil ? "\(plan.capitalized) plan · \(tier!) · live"
-                                   : "\(plan.capitalized) plan · live"
-        }
-        let sub = makeLabel(planText, size: 11, weight: .regular,
+        let sub = makeLabel(subtitle, size: 11, weight: .regular,
                             color: .secondaryLabelColor)
         sub.frame = NSRect(x: 46, y: 10, width: 200, height: 14)
         addSubview(sub)
@@ -499,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.3.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -575,22 +594,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Runs the network call OFF the main thread; parses + renders + reports success on main.
     private func fetch(_ completion: @escaping (Bool) -> Void) {
+        let provider = Provider.current
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let data = self?.runQuery()
-            let plan = self?.readPlan() ?? (name: nil, tier: nil)
+            let data = provider == .codex ? self?.codexQuery() : self?.runQuery()
+            let plan = provider == .codex ? (name: nil, tier: nil) : (self?.readPlan() ?? (name: nil, tier: nil))
+            var codexPlan: String?
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let ls = obj["limits"] as? [[String: Any]] {
-                    parsed = ls
-                } else if let err = obj["error"] as? [String: Any] {
+                if let err = obj["error"] as? [String: Any] {
                     errType = err["type"] as? String ?? ""
+                } else if provider == .codex {
+                    parsed = Self.mapCodex(obj)
+                    codexPlan = obj["plan_type"] as? String
+                } else if let ls = obj["limits"] as? [[String: Any]] {
+                    parsed = ls
                 }
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if let p = plan.name { self.planName = p; self.planTier = plan.tier }
+                guard provider == Provider.current else { completion(false); return }   // switched mid-flight — drop
+                if provider == .codex { if let cp = codexPlan { self.planName = cp; self.planTier = nil } }
+                else if let p = plan.name { self.planName = p; self.planTier = plan.tier }
                 if let ls = parsed {
                     self.lastLimits = ls
                     self.lastSuccess = Date()
@@ -631,6 +657,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         return data
+    }
+
+    /// Codex counterpart of runQuery: reads the OAuth token from ~/.codex/auth.json
+    /// (written by the Codex CLI) and calls the ChatGPT usage endpoint. Emits the
+    /// same synthesized error JSON shapes fetch() already understands.
+    private func codexQuery() -> Data? {
+        let cmd = """
+        export PATH=/usr/bin:/bin
+        AUTH="$HOME/.codex/auth.json"
+        [ -f "$AUTH" ] || { echo '{"error":{"type":"no_token"}}'; exit 0; }
+        TOKEN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tokens"]["access_token"])' "$AUTH" 2>/dev/null)
+        ACCT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tokens"].get("account_id",""))' "$AUTH" 2>/dev/null)
+        [ -z "$TOKEN" ] && { echo '{"error":{"type":"no_token"}}'; exit 0; }
+        RESP=$(curl -s --max-time 8 -w "\\n%{http_code}" https://chatgpt.com/backend-api/wham/usage \\
+          -H "Authorization: Bearer $TOKEN" \\
+          -H "Accept: application/json" \\
+          -H "ChatGPT-Account-Id: $ACCT" \\
+          -H "User-Agent: claude-usage-bar")
+        CODE=$(printf '%s' "$RESP" | tail -1)
+        if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then echo '{"error":{"type":"authentication_error"}}'; exit 0; fi
+        printf '%s' "$RESP" | sed '$d'
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = ["-c", cmd]
+        let out = Pipe()
+        task.standardOutput = out
+        task.standardError = Pipe()
+        do { try task.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return data
+    }
+
+    /// Converts the Codex usage response into the same limits array the Claude
+    /// endpoint returns, so every existing layout/theme/style renders it as-is.
+    private static func mapCodex(_ obj: [String: Any]) -> [[String: Any]] {
+        var limits: [[String: Any]] = []
+        let rl = obj["rate_limit"] as? [String: Any] ?? [:]
+        let iso = ISO8601DateFormatter()
+        func convert(_ w: [String: Any]?, fallbackHours: Double) {
+            guard let w = w, let p = w["used_percent"] as? NSNumber else { return }
+            // Window length varies by plan: Plus/Pro get 5h + weekly, Go gets a
+            // single 30-day window. Label by what the API says, not by position.
+            let secs = (w["limit_window_seconds"] as? Double) ?? (fallbackHours * 3600)
+            let hours = secs / 3600
+            let kind: String, label: String, short: String
+            if hours <= 24 {
+                kind = "session"; label = "\(Int(hours))-hour session"; short = "\(Int(hours))h \(p.intValue)%"
+            } else if hours <= 24 * 14 {
+                kind = "weekly_all"; label = "Weekly"; short = "wk \(p.intValue)%"
+            } else {
+                kind = "monthly"; label = "Monthly"; short = "mo \(p.intValue)%"
+            }
+            var entry: [String: Any] = ["kind": kind, "percent": p, "is_active": false,
+                                        "label": label, "short": short]
+            var reset: Date?
+            if let at = w["reset_at"] as? Double { reset = Date(timeIntervalSince1970: at) }
+            else if let after = w["reset_after_seconds"] as? Double { reset = Date().addingTimeInterval(after) }
+            if let reset = reset { entry["resets_at"] = iso.string(from: reset) }
+            limits.append(entry)
+        }
+        convert(rl["primary_window"] as? [String: Any], fallbackHours: 5)
+        convert(rl["secondary_window"] as? [String: Any], fallbackHours: 24 * 7)
+        return limits
     }
 
     /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
@@ -680,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch kind {
         case "session": return "clock.fill"
         case "weekly_all": return "calendar"
+        case "monthly": return "calendar.circle.fill"
         case "weekly_scoped": return "sparkles"
         default: return "gauge.medium"
         }
@@ -730,11 +822,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "Updated \(m / 60)h \(m % 60)m ago"
     }
 
+    private var headerSubtitle: String {
+        if let plan = planName, !plan.isEmpty {
+            return planTier != nil ? "\(plan.capitalized) plan · \(planTier!) · live"
+                                   : "\(plan.capitalized) plan · live"
+        }
+        return "\(Provider.current.rawValue) · live"
+    }
+
     private func authWarningItem() -> NSMenuItem? {
+        let codex = Provider.current == .codex
         let text: String
         switch authState {
-        case .expired: text = "⚠︎ Sign-in expired — open Claude Code to refresh"
-        case .missing: text = "⚠︎ No Claude Code login — run `claude` and sign in"
+        case .expired: text = codex ? "⚠︎ Codex sign-in expired — run `codex` to re-login"
+                                    : "⚠︎ Sign-in expired — open Claude Code to refresh"
+        case .missing: text = codex ? "⚠︎ No Codex login — run `codex` and sign in"
+                                    : "⚠︎ No Claude Code login — run `claude` and sign in"
         default: return nil
         }
         let it = NSMenuItem(title: text, action: nil, keyEquivalent: "")
@@ -749,14 +852,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func render() {
         let theme = Theme.current
 
+        let glyph = Provider.current.glyph
         guard let limits = lastLimits else {
-            let noDataTitle = (authState == .expired || authState == .missing) ? "◐ ⚠︎" : "◐ …"
+            let noDataTitle = (authState == .expired || authState == .missing) ? "\(glyph) ⚠︎" : "\(glyph) …"
             statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             statusItem.button?.image = nil
             let menu = NSMenu()
             menu.delegate = self
-            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, plan: planName, tier: planTier)
+            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle)
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
             if let warn = authWarningItem() {
@@ -789,12 +893,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         headerItem.view = HeaderView(worst: worst,
                                      accent: theme.accent(worst: worst, worstKind: worstKind),
                                      themeSymbol: theme.symbol,
-                                     plan: planName,
-                                     tier: planTier)
+                                     title: Provider.current.appTitle,
+                                     subtitle: headerSubtitle)
         menu.addItem(headerItem)
         let sep0 = NSMenuItem(); sep0.view = SepView(); menu.addItem(sep0)
 
         if let warn = authWarningItem() { menu.addItem(warn) }
+
+        if limits.isEmpty {
+            // Codex Business/Enterprise seats report no rate-limit windows.
+            let msg = NSMenuItem(title: "No rate-limit windows reported for this account", action: nil, keyEquivalent: "")
+            msg.isEnabled = false
+            menu.addItem(msg)
+            let info = NSMenuItem(title: "Business/Enterprise plans meter usage centrally", action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            menu.addItem(info)
+            appendFooter(to: menu)
+            statusItem.menu = menu
+            freshItem = nil
+            statusItem.button?.attributedTitle = NSAttributedString(string: "\(glyph) —",
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor,
+                             .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)])
+            statusItem.button?.image = nil
+            return
+        }
 
         let layout = LayoutStyle.current
         var infos: [(kind: String, label: String, pct: Double, reset: String, active: Bool)] = []
@@ -813,6 +935,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 short = "\(model.prefix(3)) \(Int(pct))%"; label = "Weekly · \(model)"
             default: break
             }
+            if let overrideLabel = l["label"] as? String { label = overrideLabel }
+            if let overrideShort = l["short"] as? String { short = overrideShort }
             parts.append(short)
             infos.append((kind, label, pct, resetsIn(l["resets_at"] as? String), l["is_active"] as? Bool == true))
 
@@ -830,11 +954,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .classic:
             break
         case .rings:
-            let gauges = infos.map { i in
-                (label: i.kind == "session" ? "5h" : String(i.label.dropFirst(9)),
-                 reset: i.reset.replacingOccurrences(of: "resets in ", with: ""),
-                 pct: i.pct,
-                 color: theme.color(kind: i.kind, pct: i.pct))
+            let gauges = infos.map { i -> (label: String, reset: String, pct: Double, color: NSColor) in
+                let short: String
+                if i.kind == "session" { short = "5h" }
+                else if let tail = i.label.split(separator: "·").last {
+                    short = tail.trimmingCharacters(in: .whitespaces)
+                } else { short = i.label }
+                return (label: short,
+                        reset: i.reset.replacingOccurrences(of: "resets in ", with: ""),
+                        pct: i.pct,
+                        color: theme.color(kind: i.kind, pct: i.pct))
             }
             let item = NSMenuItem()
             item.view = RingsRowView(gauges: gauges)
@@ -877,16 +1006,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var titleColor = theme.accent(worst: worst, worstKind: worstKind)
         switch BarStyle.current {
         case .full:
-            title = "◐ " + parts.joined(separator: " · ")
+            title = "\(glyph) " + parts.joined(separator: " · ")
         case .compact:
-            title = "◐ \(Int(worst))%"
+            title = "\(glyph) \(Int(worst))%"
         case .session:
             if let s = limits.first(where: { ($0["kind"] as? String) == "session" }) {
                 let p = (s["percent"] as? NSNumber)?.doubleValue ?? 0
-                title = "◐ 5h \(Int(p))%"
+                title = "\(glyph) 5h \(Int(p))%"
                 titleColor = theme.color(kind: "session", pct: p)
             } else {
-                title = "◐ " + parts.joined(separator: " · ")
+                title = "\(glyph) " + parts.joined(separator: " · ")
             }
         case .ring:
             title = ""   // the ring image below is the whole icon
@@ -912,6 +1041,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func appendFooter(to menu: NSMenu) {
         let sep = NSMenuItem(); sep.view = SepView(); menu.addItem(sep)
+
+        let providerItem = NSMenuItem(title: "Provider", action: nil, keyEquivalent: "")
+        providerItem.image = NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)
+        let providerMenu = NSMenu()
+        for p in Provider.allCases {
+            let it = NSMenuItem(title: p.rawValue, action: #selector(selectProvider(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = p.rawValue
+            it.state = (p == Provider.current) ? .on : .off
+            providerMenu.addItem(it)
+        }
+        providerItem.submenu = providerMenu
+        menu.addItem(providerItem)
 
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         themeItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
@@ -978,7 +1120,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         menu.addItem(refreshItem)
 
-        let usageItem = NSMenuItem(title: "Open claude.ai usage", action: #selector(openUsage), keyEquivalent: "")
+        let usageItem = NSMenuItem(title: Provider.current == .codex ? "Open Codex usage" : "Open claude.ai usage",
+                                   action: #selector(openUsage), keyEquivalent: "")
         usageItem.target = self
         usageItem.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
         menu.addItem(usageItem)
@@ -1154,6 +1297,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             render()   // no network — just recolor from last data
         }
     }
+    @objc private func selectProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let p = Provider(rawValue: raw), p != Provider.current else { return }
+        Provider.current = p
+        // The cached data belongs to the other provider — drop it and refetch.
+        lastLimits = nil
+        lastSuccess = nil
+        authState = .unknown
+        planName = nil
+        planTier = nil
+        render()
+        refreshNow()
+    }
     @objc private func selectLayout(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let s = LayoutStyle(rawValue: raw) {
             LayoutStyle.current = s
@@ -1175,7 +1331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     @objc private func openUsage() {
-        NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
+        NSWorkspace.shared.open(URL(string: Provider.current.usageURL)!)
     }
     @objc private func about() {
         let a = NSAlert()
