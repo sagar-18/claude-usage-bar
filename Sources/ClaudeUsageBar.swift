@@ -1062,6 +1062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             statusItem.button?.image = nil
             let menu = NSMenu()
+            menu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
             menu.delegate = self
             let other: Provider = Provider.current == .claude ? .codex : .claude
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchIcon: other.markImage, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
@@ -1092,6 +1093,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let menu = NSMenu()
+        menu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
         menu.delegate = self
         let headerItem = NSMenuItem()
         let other: Provider = Provider.current == .claude ? .codex : .claude
@@ -1362,7 +1364,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // items do, and statusItem.menu?.cancelTracking() doesn't reliably reach
     // the tracking session — go through the button's enclosingMenuItem.
     private func closeMenu(from sender: Any?) {
-        (((sender as? NSView)?.enclosingMenuItem?.menu) ?? statusItem.menu)?.cancelTracking()
+        var v = sender as? NSView
+        while let cur = v {
+            if let item = cur.enclosingMenuItem { item.menu?.cancelTracking(); return }
+            v = cur.superview
+        }
+        statusItem.menu?.cancelTracking()
     }
     @objc private func stripRefresh(_ sender: NSButton) {
         closeMenu(from: sender)
