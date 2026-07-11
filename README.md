@@ -21,7 +21,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ---
 
 ## Features
-- 🔀 **Two providers** — track **Claude** (default) or **OpenAI Codex** usage; switch anytime from the menu (Provider). Codex reads your existing `codex` CLI login from `~/.codex/auth.json` and adapts to your plan: Plus/Pro show 5-hour + weekly windows, Go shows its monthly window, Business/Enterprise seats (which OpenAI meters centrally, exposing no personal windows) get an explanatory note. Menu-bar glyph tells you which is active: ◐ Claude · ⬡ Codex
+- 🔀 **Two providers** — track **Claude** (default) or **OpenAI Codex** usage; switch instantly with the brand-mark toggle in the dropdown header. Codex reads your existing `codex` CLI login from `~/.codex/auth.json` and adapts to your plan: Plus/Pro show 5-hour + weekly windows, Go shows its monthly window, Business/Enterprise seats (which OpenAI meters centrally, exposing no personal windows) fall back to token/turn activity from the analytics API. Menu-bar glyph tells you which is active: ◐ Claude · ⬡ Codex
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
 - 🎨 **9 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal, Catppuccin, Nord, Dracula, Terminal
 - 🧩 **4 dropdown layouts** — Classic (default), Rings (Apple Watch-style gauges), Segments (threshold-marked cells), Trend + forecast ("at this pace: 100% ≈ Sat 2 PM", from locally kept history)
@@ -30,7 +30,8 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - ⚠️ **Honest about staleness** — expired Claude Code sign-in shows a `⚠︎` on the icon and a warning row (never stale numbers passing as live), plus an "Updated Xm ago" line and auto-refresh on wake from sleep
 - 🔁 **Launch at Login** — on by default from first run (modern `SMAppService`, no LaunchAgents); toggle it off from the menu anytime
-- ⬆️ **In-app updates** — checks GitHub releases daily; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
+- ⬆️ **In-app updates** — checks GitHub on launch, menu-open, and wake; shows a blue `↑` on the menu-bar icon and an "Update available…" row when a new version exists; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
+- ⚙️ **Live settings** — Theme, Layout, Menu Bar Style, and Auto Refresh live in a Settings panel that opens beside the menu; picking an option applies instantly without closing the menu
 - 🪶 Native Swift/AppKit, ~single file, no dependencies, no telemetry
 
 ## Requirements

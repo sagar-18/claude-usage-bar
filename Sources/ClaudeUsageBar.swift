@@ -660,7 +660,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1044,6 +1044,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return out
     }
 
+    /// Sets the menu-bar title, appending a blue ↑ when an update is available
+    /// so it's noticeable without opening the menu.
+    private func setStatusTitle(_ text: String, color: NSColor) {
+        let s = NSMutableAttributedString(string: text, attributes: [
+            .foregroundColor: color,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
+        ])
+        if latestVersion != nil && !updating {
+            s.append(NSAttributedString(string: (text.isEmpty ? "↑" : " ↑"), attributes: [
+                .foregroundColor: NSColor.systemBlue,
+                .font: NSFont.systemFont(ofSize: 12.5, weight: .bold),
+            ]))
+        }
+        statusItem.button?.attributedTitle = s
+    }
+
     /// Recomputes the menu-bar title/icon from current state. Separate from
     /// render() so settings changes can apply live while the menu stays open.
     private func updateStatusTitle() {
@@ -1051,18 +1067,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let glyph = Provider.current.glyph
         guard let limits = lastLimits else {
             let noDataTitle = (authState == .expired || authState == .missing) ? "\(glyph) ⚠︎" : "\(glyph) …"
-            statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+            setStatusTitle(noDataTitle, color: .secondaryLabelColor)
             statusItem.button?.image = nil
             return
         }
         if limits.isEmpty {
             var t = "\(glyph) —"
             if let act = codexActivity { t = "\(glyph) \(tokenText(act.todayTokens))" }
-            statusItem.button?.attributedTitle = NSAttributedString(string: t, attributes: [
-                .foregroundColor: NSColor.secondaryLabelColor,
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
-            ])
+            setStatusTitle(t, color: .secondaryLabelColor)
             statusItem.button?.image = nil
             return
         }
@@ -1094,10 +1106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             finalTitle = title + " ⚠︎"
             titleColor = .secondaryLabelColor
         }
-        statusItem.button?.attributedTitle = NSAttributedString(string: finalTitle, attributes: [
-            .foregroundColor: titleColor,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
-        ])
+        setStatusTitle(finalTitle, color: titleColor)
         if BarStyle.current == .ring {
             statusItem.button?.image = ringImage(pct: worst, color: titleColor)
             statusItem.button?.imagePosition = finalTitle.isEmpty ? .imageOnly : .imageLeading

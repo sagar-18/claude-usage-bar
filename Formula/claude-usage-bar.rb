@@ -2,7 +2,7 @@ class ClaudeUsageBar < Formula
   desc "Unofficial macOS menu-bar tracker for Claude Max/Pro usage"
   homepage "https://github.com/sagar-18/claude-usage-bar"
   license "MIT"
-  version "1.4.0"
+  version "1.5.0"
 
   # Builds from source (locally compiled → no Gatekeeper quarantine, no signing needed).
   head "https://github.com/sagar-18/claude-usage-bar.git", branch: "main"
