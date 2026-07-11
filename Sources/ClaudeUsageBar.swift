@@ -1335,22 +1335,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
 
-        // Settings as a real submenu item: opens BESIDE the menu (macOS picks
-        // left/right by available screen space), usage view stays visible.
-        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
-        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        let sub = makeSettingsMenu()
-        sub.delegate = self
-        settingsItem.submenu = sub
-        menu.addItem(settingsItem)
-
         let strip = NSMenuItem()
         strip.view = FooterStripView(buttons: [
             (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
+            (symbol: "gearshape", hint: "Settings", action: #selector(showSettingsMenu(_:))),
             (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
             (symbol: "power", hint: "Quit", action: #selector(quit)),
         ], target: self)
         menu.addItem(strip)
+    }
+
+    /// Pops the settings menu BESIDE the open menu (at the strip's right edge;
+    /// macOS flips it to the left when there's no screen space).
+    @objc private func showSettingsMenu(_ sender: NSButton) {
+        let m = makeSettingsMenu()
+        m.delegate = self   // pauses content rebuilds while it's open
+        let anchor = sender.superview ?? sender
+        m.popUp(positioning: nil, at: NSPoint(x: anchor.bounds.maxX - 6, y: anchor.bounds.maxY), in: anchor)
     }
 
     /// A submenu of view-based option rows: picking one does NOT dismiss the
