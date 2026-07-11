@@ -696,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.2"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.6.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -713,6 +713,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         tick()
+        // Bridge release: offer the AIdometer migration once at launch (the
+        // 🏁 menu row stays available for "Later" clickers).
+        if !UserDefaults.standard.bool(forKey: "offeredAIdometerMigration") {
+            UserDefaults.standard.set(true, forKey: "offeredAIdometerMigration")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.migrateToAIdometer() }
+        }
         // Check for updates shortly after launch, then daily.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkForUpdates() }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 24 * 3600, repeats: true) { [weak self] _ in
@@ -1405,6 +1411,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func appendFooter(to menu: NSMenu) {
         let sep = NSMenuItem(); sep.view = SepView(); menu.addItem(sep)
 
+        // Bridge release: this app has been renamed — always offer the move.
+        let mig = NSMenuItem(title: "🏁 Now called AIdometer — migrate…",
+                             action: #selector(migrateToAIdometer), keyEquivalent: "")
+        mig.target = self
+        menu.addItem(mig)
+
         // These two only appear when they matter — never buried in Settings.
         if updating {
             let it = NSMenuItem(title: "Updating… (rebuilding via brew)", action: nil, keyEquivalent: "")
@@ -1705,6 +1717,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.messageText = "Update failed"
         a.informativeText = "brew reinstall did not succeed. You can update manually:\n\nbrew update && brew reinstall claude-usage-bar\n\n\(detail)"
         a.runModal()
+    }
+
+    // MARK: - Migration to AIdometer (this app's new name)
+
+    @objc private func migrateToAIdometer() {
+        let a = NSAlert()
+        a.messageText = "Claude Usage Bar is now AIdometer 🏁"
+        a.informativeText = "Same app, new name — it tracks OpenAI Codex too now, and the old name clashed with an unrelated project.\n\nMigrating installs AIdometer via Homebrew, launches it, and removes Claude Usage Bar. Takes under a minute; settings reset once."
+        a.addButton(withTitle: "Migrate")
+        a.addButton(withTitle: "Later")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+
+        updating = true
+        render()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+                DispatchQueue.main.async { self?.updateFailed("Homebrew not found") }
+                return
+            }
+            let root = ((brew as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
+            let appPath = "\(root)/opt/aidometer/AIdometer.app"
+            let cmd = """
+            "\(brew)" tap sagar-18/aidometer https://github.com/sagar-18/AIdometer >/dev/null 2>&1
+            "\(brew)" install sagar-18/aidometer/aidometer 2>&1
+            [ -d "\(appPath)" ] && open "\(appPath)"
+            "\(brew)" uninstall claude-usage-bar >/dev/null 2>&1 || true
+            "\(brew)" untap sagar-18/claude-usage-bar >/dev/null 2>&1 || true
+            """
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/bash")
+            task.arguments = ["-c", cmd]
+            let out = Pipe()
+            task.standardOutput = out
+            task.standardError = out
+            do { try task.run() } catch {
+                DispatchQueue.main.async { self?.updateFailed("Couldn't run brew: \(error.localizedDescription)") }
+                return
+            }
+            let output = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            task.waitUntilExit()
+            DispatchQueue.main.async {
+                if FileManager.default.fileExists(atPath: appPath) {
+                    // Hand the login item over to AIdometer and bow out.
+                    if #available(macOS 13.0, *) { try? SMAppService.mainApp.unregister() }
+                    NSApplication.shared.terminate(nil)
+                } else {
+                    self?.updateFailed(String(output.suffix(500)))
+                }
+            }
+        }
     }
 
     @objc private func selectTheme(_ sender: NSMenuItem) {
