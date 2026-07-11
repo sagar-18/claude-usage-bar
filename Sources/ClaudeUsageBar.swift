@@ -450,7 +450,8 @@ final class TrendRowView: NSView {
 // MARK: - Stat row (RowView geometry, arbitrary value instead of %; used for Codex activity)
 
 final class StatRowView: NSView {
-    init(icon: String, name: String, value: String, pct: Double, caption: String, color: NSColor) {
+    init(icon: String, name: String, value: String, pct: Double, caption: String, color: NSColor,
+         segmented: Bool = false) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
         let W = frame.width
         let iv = NSImageView(frame: NSRect(x: 16, y: 34, width: 15, height: 15))
@@ -465,7 +466,8 @@ final class StatRowView: NSView {
                                    color: color, align: .right, mono: true)
         valueField.frame = NSRect(x: W - 176, y: 32, width: 160, height: 20)
         addSubview(valueField)
-        let bar = BarView(pct: pct, fill: color, width: W - 40 - 16)
+        let bar: NSView = segmented ? SegBarView(pct: pct, fill: color, width: W - 40 - 16)
+                                    : BarView(pct: pct, fill: color, width: W - 40 - 16)
         bar.frame.origin = NSPoint(x: 40, y: 22)
         addSubview(bar)
         if !caption.isEmpty {
@@ -546,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var planTier: String?        // "20x"/"5x" from rateLimitTier, when present
     // Codex activity (tokens/turns) from the analytics endpoint — the only usage
     // signal Business/Enterprise seats get, and a nice extra for everyone else.
-    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)?
+    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])?
     private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
@@ -644,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let data = provider == .codex ? self?.codexQuery() : self?.runQuery()
             let plan = provider == .codex ? (name: nil, tier: nil) : (self?.readPlan() ?? (name: nil, tier: nil))
             var codexPlan: String?
-            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)?
+            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])?
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
@@ -784,22 +786,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return limits
     }
 
-    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)? {
+    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])? {
         guard let rows = a?["data"] as? [[String: Any]], !rows.isEmpty else { return nil }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        let today = fmt.string(from: Date())
-        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0, peak = 0
+        var byDate: [String: (tok: Int, turns: Int)] = [:]
         for r in rows {
+            guard let date = r["date"] as? String else { continue }
             let totals = r["totals"] as? [String: Any] ?? [:]
-            let tok = (totals["text_total_tokens"] as? NSNumber)?.intValue ?? 0
-            let turns = (totals["turns"] as? NSNumber)?.intValue ?? 0
-            weekTok += tok
-            weekTurns += turns
-            peak = max(peak, tok)
-            if (r["date"] as? String) == today { todayTok = tok; todayTurns = turns }
+            byDate[date] = ((totals["text_total_tokens"] as? NSNumber)?.intValue ?? 0,
+                            (totals["turns"] as? NSNumber)?.intValue ?? 0)
         }
-        return (todayTok, todayTurns, weekTok, weekTurns, peak)
+        // Dense 7-day series (API omits zero days) so sparklines have real shape.
+        var days: [Int] = []
+        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0, peak = 0
+        for offset in stride(from: -6, through: 0, by: 1) {
+            let date = fmt.string(from: Calendar.current.date(byAdding: .day, value: offset, to: Date()) ?? Date())
+            let d = byDate[date] ?? (0, 0)
+            days.append(d.tok)
+            weekTok += d.tok
+            weekTurns += d.turns
+            peak = max(peak, d.tok)
+            if offset == 0 { todayTok = d.tok; todayTurns = d.turns }
+        }
+        return (todayTok, todayTurns, weekTok, weekTurns, peak, days)
     }
 
     /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
@@ -906,25 +916,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "\(n)"
     }
 
-    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)) -> [NSMenuItem] {
+    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])) -> [NSMenuItem] {
         func turns(_ n: Int) -> String { n == 1 ? "1 turn" : "\(n) turns" }
         let theme = Theme.current
         let peak = max(act.peakTokens, 1)
-        let today = NSMenuItem()
-        today.view = StatRowView(icon: "bolt.fill", name: "Today",
-                                 value: "\(tokenText(act.todayTokens)) tok · \(turns(act.todayTurns))",
-                                 pct: Double(act.todayTokens) / Double(peak) * 100,
-                                 caption: act.todayTokens == 0 ? "no usage yet today"
-                                        : "vs busiest day this week (\(tokenText(act.peakTokens)))",
-                                 color: theme.color(kind: "session", pct: 0))
+        let todayPct = Double(act.todayTokens) / Double(peak) * 100
         let avg = act.weekTokens / 7
-        let week = NSMenuItem()
-        week.view = StatRowView(icon: "calendar", name: "Last 7 days",
-                                value: "\(tokenText(act.weekTokens)) tok · \(turns(act.weekTurns))",
-                                pct: Double(avg) / Double(peak) * 100,
-                                caption: "daily average \(tokenText(avg)) tok",
-                                color: theme.color(kind: "weekly_all", pct: 0))
-        return [today, week]
+        let avgPct = Double(avg) / Double(peak) * 100
+        let todayColor = theme.color(kind: "session", pct: 0)
+        let weekColor = theme.color(kind: "weekly_all", pct: 0)
+        let todayCaption = act.todayTokens == 0 ? "no usage yet today"
+                         : "vs busiest day this week (\(tokenText(act.peakTokens)))"
+
+        switch LayoutStyle.current {
+        case .rings:
+            let item = NSMenuItem()
+            item.view = RingsRowView(gauges: [
+                (label: "today", reset: "\(tokenText(act.todayTokens)) tok", pct: todayPct, color: todayColor),
+                (label: "daily avg", reset: "\(tokenText(avg)) tok", pct: avgPct, color: weekColor),
+                (label: "7d total", reset: "\(tokenText(act.weekTokens)) tok", pct: 100, color: weekColor),
+            ])
+            return [item]
+        case .trend:
+            let points = act.days.enumerated().map { (t: Double($0.offset), p: Double($0.element) / Double(peak) * 100) }
+            let item = NSMenuItem()
+            item.view = TrendRowView(icon: "bolt.fill", name: "Daily tokens", pct: todayPct,
+                                     caption: "today \(tokenText(act.todayTokens)) · 7d \(tokenText(act.weekTokens)) · peak \(tokenText(act.peakTokens))",
+                                     active: false, color: todayColor, points: points)
+            return [item]
+        case .classic, .segments:
+            let seg = LayoutStyle.current == .segments
+            let today = NSMenuItem()
+            today.view = StatRowView(icon: "bolt.fill", name: "Today",
+                                     value: "\(tokenText(act.todayTokens)) tok · \(turns(act.todayTurns))",
+                                     pct: todayPct, caption: todayCaption, color: todayColor, segmented: seg)
+            let week = NSMenuItem()
+            week.view = StatRowView(icon: "calendar", name: "Last 7 days",
+                                    value: "\(tokenText(act.weekTokens)) tok · \(turns(act.weekTurns))",
+                                    pct: avgPct, caption: "daily average \(tokenText(avg)) tok",
+                                    color: weekColor, segmented: seg)
+            return [today, week]
+        }
     }
 
     private var headerSubtitle: String {
