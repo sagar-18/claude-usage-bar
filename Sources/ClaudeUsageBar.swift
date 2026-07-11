@@ -1281,9 +1281,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let strip = NSMenuItem()
         strip.view = FooterStripView(buttons: [
-            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh)),
-            (symbol: "gearshape", hint: "Settings", action: #selector(showSettingsMenu)),
-            (symbol: "info.circle", hint: "About", action: #selector(stripAbout)),
+            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
+            (symbol: "gearshape", hint: "Settings", action: #selector(showSettingsMenu(_:))),
+            (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
             (symbol: "power", hint: "Quit", action: #selector(quit)),
         ], target: self)
         menu.addItem(strip)
@@ -1358,24 +1358,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return menu
     }
 
-    // Strip buttons live inside a custom view, which doesn't auto-close the
-    // menu the way real menu items do — close it explicitly first.
-    @objc private func stripRefresh() {
-        statusItem.menu?.cancelTracking()
+    // Buttons inside menu-item views don't auto-close the menu like real menu
+    // items do, and statusItem.menu?.cancelTracking() doesn't reliably reach
+    // the tracking session — go through the button's enclosingMenuItem.
+    private func closeMenu(from sender: Any?) {
+        (((sender as? NSView)?.enclosingMenuItem?.menu) ?? statusItem.menu)?.cancelTracking()
+    }
+    @objc private func stripRefresh(_ sender: NSButton) {
+        closeMenu(from: sender)
         refreshNow()
     }
-    @objc private func stripAbout() {
-        statusItem.menu?.cancelTracking()
+    @objc private func stripAbout(_ sender: NSButton) {
+        closeMenu(from: sender)
         about()
     }
-    @objc private func openUsageFromMenu() {
-        statusItem.menu?.cancelTracking()
+    @objc private func openUsageFromMenu(_ sender: NSButton) {
+        closeMenu(from: sender)
         openUsage()
     }
-    @objc private func showSettingsMenu() {
-        statusItem.menu?.cancelTracking()
+    @objc private func showSettingsMenu(_ sender: NSButton) {
+        closeMenu(from: sender)
         let m = makeSettingsMenu()
-        DispatchQueue.main.async {
+        // Give the closing menu a beat to end its tracking session, or the
+        // popup gets swallowed by it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         }
     }
@@ -1523,8 +1529,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             render()   // no network — just recolor from last data
         }
     }
-    @objc private func toggleProvider() {
-        statusItem.menu?.cancelTracking()   // close the open menu before rebuilding it
+    @objc private func toggleProvider(_ sender: Any?) {
+        closeMenu(from: sender)   // close the open menu before rebuilding it
         Provider.current = Provider.current == .claude ? .codex : .claude
         // The cached data belongs to the other provider — drop it and refetch.
         lastLimits = nil
