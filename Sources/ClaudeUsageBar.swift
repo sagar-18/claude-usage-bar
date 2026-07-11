@@ -696,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.1"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.2"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -736,6 +736,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         if menu === mainMenu { menuIsOpen = false }
         inSettings = false
+        // Settings panel closed (moved to another row, menu dismissed, …):
+        // detach it so the highlighted strip row can't silently re-open it.
+        if menu !== mainMenu, settingsStripItem?.submenu === menu {
+            settingsStripItem?.submenu = nil
+        }
         // A setting changed while the panel was open — rebuild the dropdown so
         // themed colors / layout apply. If the settings submenu just closed but
         // the main menu is still open, this updates the visible rows live; if
@@ -1413,16 +1418,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
 
-        // One strip: ↻ ⓘ ⏻ ⚙. The settings submenu is attached to the row ONLY
-        // while the pointer is over the gear — menu tracking re-checks the
-        // highlighted item's submenu continuously, so attaching mid-hover opens
-        // the panel to the side, and detaching on the other icons keeps them
-        // from ever triggering it.
+        // One strip: ↻ ⓘ ⏻ ⚙. The submenu is attached only while the pointer
+        // is over the gear — tracking notices on the next mouse move, so
+        // hover-open is instant (click-attach alone feels dead: tracking only
+        // re-checks on movement). The other icons can't open it, and — key for
+        // panels that open on the LEFT (menu near the right screen edge) —
+        // they never close an already-open panel while the cursor crosses
+        // them to reach it.
         let sub = makeSettingsMenu()
         sub.delegate = self
         let strip = NSMenuItem()
         let attach: () -> Void = { [weak strip] in strip?.submenu = sub }
-        let detach: () -> Void = { [weak strip] in strip?.submenu = nil }
+        let detach: () -> Void = { [weak self, weak strip] in
+            guard self?.inSettings != true else { return }   // never close an open panel
+            strip?.submenu = nil
+        }
         strip.view = FooterStripView(buttons: [
             (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:)), hover: detach),
             (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:)), hover: detach),
@@ -1433,8 +1443,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsStripItem = strip
     }
 
-    /// Gear click: make sure the submenu is attached (hover normally already
-    /// did this; the open then follows from the row being highlighted).
+    /// Gear click: ensure the submenu is attached (hover normally already did
+    /// this); the open follows from the row being highlighted.
     @objc private func gearClicked(_ sender: NSButton) {
         guard let strip = settingsStripItem, strip.submenu == nil else { return }
         let sub = makeSettingsMenu()
