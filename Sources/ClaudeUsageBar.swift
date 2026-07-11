@@ -502,6 +502,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastSuccess: Date?       // when we last parsed fresh usage data
     private var planName: String?        // subscriptionType from the Keychain ("max", "pro", …)
     private var planTier: String?        // "20x"/"5x" from rateLimitTier, when present
+    // Codex activity (tokens/turns) from the analytics endpoint — the only usage
+    // signal Business/Enterprise seats get, and a nice extra for everyone else.
+    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)?
     private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
@@ -599,6 +602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let data = provider == .codex ? self?.codexQuery() : self?.runQuery()
             let plan = provider == .codex ? (name: nil, tier: nil) : (self?.readPlan() ?? (name: nil, tier: nil))
             var codexPlan: String?
+            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)?
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
@@ -606,8 +610,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let err = obj["error"] as? [String: Any] {
                     errType = err["type"] as? String ?? ""
                 } else if provider == .codex {
-                    parsed = Self.mapCodex(obj)
-                    codexPlan = obj["plan_type"] as? String
+                    let usage = obj["usage"] as? [String: Any] ?? obj
+                    parsed = Self.mapCodex(usage)
+                    codexPlan = usage["plan_type"] as? String
+                    activity = Self.mapActivity(obj["activity"] as? [String: Any])
                 } else if let ls = obj["limits"] as? [[String: Any]] {
                     parsed = ls
                 }
@@ -615,7 +621,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 guard provider == Provider.current else { completion(false); return }   // switched mid-flight — drop
-                if provider == .codex { if let cp = codexPlan { self.planName = cp; self.planTier = nil } }
+                if provider == .codex {
+                    if let cp = codexPlan { self.planName = cp; self.planTier = nil }
+                    if let act = activity { self.codexActivity = act }
+                }
                 else if let p = plan.name { self.planName = p; self.planTier = plan.tier }
                 if let ls = parsed {
                     self.lastLimits = ls
@@ -677,7 +686,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           -H "User-Agent: claude-usage-bar")
         CODE=$(printf '%s' "$RESP" | tail -1)
         if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then echo '{"error":{"type":"authentication_error"}}'; exit 0; fi
-        printf '%s' "$RESP" | sed '$d'
+        BODY=$(printf '%s' "$RESP" | sed '$d')
+        END=$(date +%Y-%m-%d); START=$(date -v-6d +%Y-%m-%d)
+        ACT=$(curl -s --max-time 8 "https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts?start_date=$START&end_date=$END&group_by=day&workspace_user=true" \\
+          -H "Authorization: Bearer $TOKEN" \\
+          -H "Accept: application/json" \\
+          -H "ChatGPT-Account-Id: $ACCT" \\
+          -H "User-Agent: claude-usage-bar")
+        case "$BODY" in "{"*) ;; *) BODY='{}';; esac
+        case "$ACT" in "{"*) ;; *) ACT='{}';; esac
+        printf '{"usage":%s,"activity":%s}' "$BODY" "$ACT"
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -722,6 +740,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         convert(rl["primary_window"] as? [String: Any], fallbackHours: 5)
         convert(rl["secondary_window"] as? [String: Any], fallbackHours: 24 * 7)
         return limits
+    }
+
+    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)? {
+        guard let rows = a?["data"] as? [[String: Any]], !rows.isEmpty else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let today = fmt.string(from: Date())
+        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0
+        for r in rows {
+            let totals = r["totals"] as? [String: Any] ?? [:]
+            let tok = (totals["text_total_tokens"] as? NSNumber)?.intValue ?? 0
+            let turns = (totals["turns"] as? NSNumber)?.intValue ?? 0
+            weekTok += tok
+            weekTurns += turns
+            if (r["date"] as? String) == today { todayTok = tok; todayTurns = turns }
+        }
+        return (todayTok, todayTurns, weekTok, weekTurns)
     }
 
     /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
@@ -822,6 +857,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "Updated \(m / 60)h \(m % 60)m ago"
     }
 
+    private func tokenText(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
+        return "\(n)"
+    }
+
+    private func activityItem(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)) -> NSMenuItem {
+        let text = "Today: \(tokenText(act.todayTokens)) tokens · \(act.todayTurns) turns   ·   7d: \(tokenText(act.weekTokens)) · \(act.weekTurns) turns"
+        let it = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        it.isEnabled = false
+        it.attributedTitle = NSAttributedString(string: text, attributes: [
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+        ])
+        return it
+    }
+
     private var headerSubtitle: String {
         if let plan = planName, !plan.isEmpty {
             return planTier != nil ? "\(plan.capitalized) plan · \(planTier!) · live"
@@ -901,8 +953,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let warn = authWarningItem() { menu.addItem(warn) }
 
         if limits.isEmpty {
-            // Codex Business/Enterprise seats report no rate-limit windows.
-            let msg = NSMenuItem(title: "No rate-limit windows reported for this account", action: nil, keyEquivalent: "")
+            // Codex Business/Enterprise seats report no rate-limit windows —
+            // show token activity from the analytics endpoint instead.
+            var title = "\(glyph) —"
+            if let act = codexActivity {
+                menu.addItem(activityItem(act))
+                title = "\(glyph) \(tokenText(act.todayTokens))"
+            }
+            let msg = NSMenuItem(title: "No rate-limit windows on this plan", action: nil, keyEquivalent: "")
             msg.isEnabled = false
             menu.addItem(msg)
             let info = NSMenuItem(title: "Business/Enterprise plans meter usage centrally", action: nil, keyEquivalent: "")
@@ -911,7 +969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             appendFooter(to: menu)
             statusItem.menu = menu
             freshItem = nil
-            statusItem.button?.attributedTitle = NSAttributedString(string: "\(glyph) —",
+            statusItem.button?.attributedTitle = NSAttributedString(string: title,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor,
                              .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)])
             statusItem.button?.image = nil
@@ -986,6 +1044,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                          points: UsageHistory.series(kind: i.kind, hours: i.kind == "session" ? 5 : 72))
                 menu.addItem(item)
             }
+        }
+
+        if Provider.current == .codex, let act = codexActivity {
+            menu.addItem(activityItem(act))
         }
 
         let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
@@ -1307,6 +1369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         authState = .unknown
         planName = nil
         planTier = nil
+        codexActivity = nil
         render()
         refreshNow()
     }
