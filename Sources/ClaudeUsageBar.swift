@@ -864,7 +864,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func activityItem(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)) -> NSMenuItem {
-        let text = "Today: \(tokenText(act.todayTokens)) tokens · \(act.todayTurns) turns   ·   7d: \(tokenText(act.weekTokens)) · \(act.weekTurns) turns"
+        func turns(_ n: Int) -> String { n == 1 ? "1 turn" : "\(n) turns" }
+        let text = "Today: \(tokenText(act.todayTokens)) tokens · \(turns(act.todayTurns))   ·   7d: \(tokenText(act.weekTokens)) · \(turns(act.weekTurns))"
         let it = NSMenuItem(title: text, action: nil, keyEquivalent: "")
         it.isEnabled = false
         it.attributedTitle = NSAttributedString(string: text, attributes: [
