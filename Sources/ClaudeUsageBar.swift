@@ -447,6 +447,27 @@ final class TrendRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// MARK: - Stat row (icon + label + right-aligned value; used for Codex activity)
+
+final class StatRowView: NSView {
+    init(icon: String, name: String, value: String, color: NSColor) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 32))
+        let iv = NSImageView(frame: NSRect(x: 16, y: 8, width: 15, height: 15))
+        iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        iv.contentTintColor = color
+        addSubview(iv)
+        let nameField = makeLabel(name, size: 13, weight: .semibold, color: .labelColor)
+        nameField.frame = NSRect(x: 40, y: 7, width: 110, height: 18)
+        addSubview(nameField)
+        let valueField = makeLabel(value, size: 12.5, weight: .semibold, color: color,
+                                   align: .right, mono: true)
+        valueField.frame = NSRect(x: 150, y: 7, width: frame.width - 166, height: 18)
+        addSubview(valueField)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // MARK: - Header
 
 final class HeaderView: NSView {
@@ -863,16 +884,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "\(n)"
     }
 
-    private func activityItem(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)) -> NSMenuItem {
+    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)) -> [NSMenuItem] {
         func turns(_ n: Int) -> String { n == 1 ? "1 turn" : "\(n) turns" }
-        let text = "Today: \(tokenText(act.todayTokens)) tokens · \(turns(act.todayTurns))   ·   7d: \(tokenText(act.weekTokens)) · \(turns(act.weekTurns))"
-        let it = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        it.isEnabled = false
-        it.attributedTitle = NSAttributedString(string: text, attributes: [
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-        ])
-        return it
+        let theme = Theme.current
+        let today = NSMenuItem()
+        today.view = StatRowView(icon: "bolt.fill", name: "Today",
+                                 value: "\(tokenText(act.todayTokens)) tok · \(turns(act.todayTurns))",
+                                 color: theme.color(kind: "session", pct: 0))
+        let week = NSMenuItem()
+        week.view = StatRowView(icon: "calendar", name: "Last 7 days",
+                                value: "\(tokenText(act.weekTokens)) tok · \(turns(act.weekTurns))",
+                                color: theme.color(kind: "weekly_all", pct: 45))
+        return [today, week]
     }
 
     private var headerSubtitle: String {
@@ -958,14 +981,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // show token activity from the analytics endpoint instead.
             var title = "\(glyph) —"
             if let act = codexActivity {
-                menu.addItem(activityItem(act))
+                activityItems(act).forEach { menu.addItem($0) }
                 title = "\(glyph) \(tokenText(act.todayTokens))"
             }
-            let msg = NSMenuItem(title: "No rate-limit windows on this plan", action: nil, keyEquivalent: "")
-            msg.isEnabled = false
-            menu.addItem(msg)
-            let info = NSMenuItem(title: "Business/Enterprise plans meter usage centrally", action: nil, keyEquivalent: "")
+            let caption = "No personal rate limits — this plan meters usage at the workspace level"
+            let info = NSMenuItem(title: caption, action: nil, keyEquivalent: "")
             info.isEnabled = false
+            info.attributedTitle = NSAttributedString(string: caption, attributes: [
+                .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: NSFont.systemFont(ofSize: 10.5),
+            ])
             menu.addItem(info)
             appendFooter(to: menu)
             statusItem.menu = menu
@@ -1048,7 +1073,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if Provider.current == .codex, let act = codexActivity {
-            menu.addItem(activityItem(act))
+            activityItems(act).forEach { menu.addItem($0) }
         }
 
         let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
