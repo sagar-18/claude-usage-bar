@@ -447,23 +447,44 @@ final class TrendRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
-// MARK: - Stat row (icon + label + right-aligned value; used for Codex activity)
+// MARK: - Stat row (RowView geometry, arbitrary value instead of %; used for Codex activity)
 
 final class StatRowView: NSView {
-    init(icon: String, name: String, value: String, color: NSColor) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 32))
-        let iv = NSImageView(frame: NSRect(x: 16, y: 8, width: 15, height: 15))
+    init(icon: String, name: String, value: String, pct: Double, caption: String, color: NSColor) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
+        let W = frame.width
+        let iv = NSImageView(frame: NSRect(x: 16, y: 34, width: 15, height: 15))
         iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         iv.contentTintColor = color
         addSubview(iv)
         let nameField = makeLabel(name, size: 13, weight: .semibold, color: .labelColor)
-        nameField.frame = NSRect(x: 40, y: 7, width: 110, height: 18)
+        nameField.frame = NSRect(x: 40, y: 33, width: 130, height: 18)
         addSubview(nameField)
-        let valueField = makeLabel(value, size: 12.5, weight: .semibold, color: color,
-                                   align: .right, mono: true)
-        valueField.frame = NSRect(x: 150, y: 7, width: frame.width - 166, height: 18)
+        let valueField = makeLabel(value, size: 14, weight: .bold,
+                                   color: color, align: .right, mono: true)
+        valueField.frame = NSRect(x: W - 176, y: 32, width: 160, height: 20)
         addSubview(valueField)
+        let bar = BarView(pct: pct, fill: color, width: W - 40 - 16)
+        bar.frame.origin = NSPoint(x: 40, y: 22)
+        addSubview(bar)
+        if !caption.isEmpty {
+            let c = makeLabel(caption, size: 11, weight: .regular, color: .secondaryLabelColor)
+            c.frame = NSRect(x: 40, y: 5, width: W - 56, height: 14)
+            addSubview(c)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// A fixed-width caption line, so long text can't stretch the whole menu.
+final class CaptionView: NSView {
+    init(_ text: String) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 20))
+        let l = makeLabel(text, size: 10.5, weight: .regular, color: .tertiaryLabelColor)
+        l.lineBreakMode = .byTruncatingTail
+        l.frame = NSRect(x: 16, y: 3, width: frame.width - 32, height: 14)
+        addSubview(l)
     }
     required init?(coder: NSCoder) { fatalError() }
 }
@@ -525,7 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var planTier: String?        // "20x"/"5x" from rateLimitTier, when present
     // Codex activity (tokens/turns) from the analytics endpoint — the only usage
     // signal Business/Enterprise seats get, and a nice extra for everyone else.
-    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)?
+    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)?
     private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
@@ -623,7 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let data = provider == .codex ? self?.codexQuery() : self?.runQuery()
             let plan = provider == .codex ? (name: nil, tier: nil) : (self?.readPlan() ?? (name: nil, tier: nil))
             var codexPlan: String?
-            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)?
+            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)?
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
@@ -763,21 +784,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return limits
     }
 
-    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)? {
+    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)? {
         guard let rows = a?["data"] as? [[String: Any]], !rows.isEmpty else { return nil }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         let today = fmt.string(from: Date())
-        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0
+        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0, peak = 0
         for r in rows {
             let totals = r["totals"] as? [String: Any] ?? [:]
             let tok = (totals["text_total_tokens"] as? NSNumber)?.intValue ?? 0
             let turns = (totals["turns"] as? NSNumber)?.intValue ?? 0
             weekTok += tok
             weekTurns += turns
+            peak = max(peak, tok)
             if (r["date"] as? String) == today { todayTok = tok; todayTurns = turns }
         }
-        return (todayTok, todayTurns, weekTok, weekTurns)
+        return (todayTok, todayTurns, weekTok, weekTurns, peak)
     }
 
     /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
@@ -884,17 +906,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "\(n)"
     }
 
-    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int)) -> [NSMenuItem] {
+    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int)) -> [NSMenuItem] {
         func turns(_ n: Int) -> String { n == 1 ? "1 turn" : "\(n) turns" }
         let theme = Theme.current
+        let peak = max(act.peakTokens, 1)
         let today = NSMenuItem()
         today.view = StatRowView(icon: "bolt.fill", name: "Today",
                                  value: "\(tokenText(act.todayTokens)) tok · \(turns(act.todayTurns))",
+                                 pct: Double(act.todayTokens) / Double(peak) * 100,
+                                 caption: act.todayTokens == 0 ? "no usage yet today"
+                                        : "vs busiest day this week (\(tokenText(act.peakTokens)))",
                                  color: theme.color(kind: "session", pct: 0))
+        let avg = act.weekTokens / 7
         let week = NSMenuItem()
         week.view = StatRowView(icon: "calendar", name: "Last 7 days",
                                 value: "\(tokenText(act.weekTokens)) tok · \(turns(act.weekTurns))",
-                                color: theme.color(kind: "weekly_all", pct: 45))
+                                pct: Double(avg) / Double(peak) * 100,
+                                caption: "daily average \(tokenText(avg)) tok",
+                                color: theme.color(kind: "weekly_all", pct: 0))
         return [today, week]
     }
 
@@ -984,13 +1013,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 activityItems(act).forEach { menu.addItem($0) }
                 title = "\(glyph) \(tokenText(act.todayTokens))"
             }
-            let caption = "No personal rate limits — this plan meters usage at the workspace level"
-            let info = NSMenuItem(title: caption, action: nil, keyEquivalent: "")
-            info.isEnabled = false
-            info.attributedTitle = NSAttributedString(string: caption, attributes: [
-                .foregroundColor: NSColor.tertiaryLabelColor,
-                .font: NSFont.systemFont(ofSize: 10.5),
-            ])
+            let info = NSMenuItem()
+            info.view = CaptionView("No personal rate limits — usage is metered at the workspace level")
             menu.addItem(info)
             appendFooter(to: menu)
             statusItem.menu = menu
