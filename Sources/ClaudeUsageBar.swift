@@ -629,6 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuIsOpen = false
     private var inSettings = false
     private var pendingRerender = false
+    private var contentCount = 0   // number of leading content items (before the footer)
     private weak var settingsSubmenuItem: NSMenuItem?
     var timer: Timer?
     var updateTimer: Timer?
@@ -1191,13 +1192,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render() {
-        // Don't yank the settings view out from under the user mid-browse.
+        // Don't yank the whole menu (incl. the open settings submenu) out from
+        // under the user mid-browse — settings changes go through liveUpdate().
         if inSettings && menuIsOpen { return }
-        let menu = mainMenu
-        menu.removeAllItems()
+        mainMenu.removeAllItems()
+        updateStatusTitle()
+        contentCount = buildContent(into: mainMenu)
+        appendFooter(to: mainMenu)
+    }
+
+    /// Rebuild only the content rows (header … freshness) in place, leaving the
+    /// footer and its open settings submenu untouched — this is what makes
+    /// theme/layout changes apply instantly while the panel stays open.
+    private func liveUpdateContent() {
+        guard menuIsOpen else { render(); return }
+        updateStatusTitle()
+        let tmp = NSMenu()
+        let newCount = buildContent(into: tmp)
+        let fresh = tmp.items
+        tmp.removeAllItems()   // detach so items can re-parent into mainMenu
+        for _ in 0..<contentCount where mainMenu.numberOfItems > 0 { mainMenu.removeItem(at: 0) }
+        for (i, it) in fresh.enumerated() { mainMenu.insertItem(it, at: i) }
+        contentCount = newCount
+    }
+
+    /// Builds the content rows (everything above the footer) into `menu` and
+    /// returns how many items it added. Sets freshLine as a side effect.
+    @discardableResult
+    private func buildContent(into menu: NSMenu) -> Int {
+        let start = menu.numberOfItems
         let theme = Theme.current
 
-        updateStatusTitle()
         guard let limits = lastLimits else {
             let other: Provider = Provider.current == .claude ? .codex : .claude
             let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchIcon: other.markImage, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
@@ -1213,9 +1238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 info.isEnabled = false
                 menu.addItem(info)
             }
-            appendFooter(to: menu)
             freshLine = nil   // this menu has no freshness row
-            return
+            return menu.numberOfItems - start
         }
 
         var worst = 0.0
@@ -1260,8 +1284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             fresh.view = line
             menu.addItem(fresh)
             freshLine = line
-            appendFooter(to: menu)
-            return
+            return menu.numberOfItems - start
         }
 
         let layout = LayoutStyle.current
@@ -1326,7 +1349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(fresh)
         freshLine = line
 
-        appendFooter(to: menu)
+        return menu.numberOfItems - start
     }
 
     private func appendFooter(to menu: NSMenu) {
@@ -1392,8 +1415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             b.onPick = { [weak self] v in
                 apply(v)
                 restyle()
-                self?.updateStatusTitle()      // live feedback in the menu bar
-                self?.pendingRerender = true   // rebuild the dropdown rows on return
+                self?.liveUpdateContent()   // rebuild rows in place — instant, panel stays open
             }
             buttons.append(b)
             let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
