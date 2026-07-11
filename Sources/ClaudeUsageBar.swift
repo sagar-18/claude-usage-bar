@@ -695,16 +695,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// sleep, which pauses timers). Also check whenever the menu is opened, at
     /// most once an hour — the moment the user looks is the moment it matters.
     func menuDidClose(_ menu: NSMenu) {
-        guard menu === mainMenu else { return }
-        menuIsOpen = false
-        if inSettings {
-            inSettings = false
-            DispatchQueue.main.async { [weak self] in self?.render() }   // reset to main view for next open
-        }
+        if menu === mainMenu { menuIsOpen = false }
+        inSettings = false
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         if menu === mainMenu { menuIsOpen = true }
+        else { inSettings = true }   // the Settings submenu — pause content rebuilds while browsing
         // The freshness label is baked in at render time, which happens right
         // after each successful fetch — left alone it would read "just now"
         // forever. Re-stamp it with the real age at the moment of opening.
@@ -1338,10 +1335,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
 
+        // Settings as a real submenu item: opens BESIDE the menu (macOS picks
+        // left/right by available screen space), usage view stays visible.
+        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        let sub = makeSettingsMenu()
+        sub.delegate = self
+        settingsItem.submenu = sub
+        menu.addItem(settingsItem)
+
         let strip = NSMenuItem()
         strip.view = FooterStripView(buttons: [
             (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
-            (symbol: "gearshape", hint: "Settings", action: #selector(showSettingsMenu(_:))),
             (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
             (symbol: "power", hint: "Quit", action: #selector(quit)),
         ], target: self)
@@ -1479,23 +1484,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openUsageFromMenu(_ sender: NSButton) {
         closeMenu(from: sender)
         openUsage()
-    }
-    @objc private func showSettingsMenu(_ sender: NSButton) {
-        // Drill into settings inside the same open menu.
-        inSettings = true
-        mainMenu.removeAllItems()
-        let back = NSMenuItem(title: "‹ Back", action: #selector(backToMain), keyEquivalent: "")
-        back.target = self
-        mainMenu.addItem(back)
-        let s = NSMenuItem(); s.view = SepView(); mainMenu.addItem(s)
-        let settings = makeSettingsMenu()
-        let items = settings.items
-        settings.removeAllItems()   // detach so they can join mainMenu
-        items.forEach { mainMenu.addItem($0) }
-    }
-    @objc private func backToMain() {
-        inSettings = false
-        render()
     }
 
     // MARK: - Launch at Login (SMAppService — uses modern Login Items, not the EDR-locked LaunchAgents dir)
