@@ -489,6 +489,51 @@ final class StatRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// Freshness line with a trailing link: "Updated 2m ago · claude.ai usage ↗"
+final class FreshLineView: NSView {
+    private let label: NSTextField
+    init(text: String, linkTitle: String, target: AnyObject?, action: Selector?) {
+        label = makeLabel(text, size: 10.5, weight: .regular, color: .tertiaryLabelColor)
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
+        label.frame = NSRect(x: 16, y: 4, width: 160, height: 14)
+        addSubview(label)
+        let btn = NSButton(frame: NSRect(x: frame.width - 146, y: 1, width: 130, height: 20))
+        btn.isBordered = false
+        btn.alignment = .right
+        btn.attributedTitle = NSAttributedString(string: linkTitle, attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ])
+        btn.target = target
+        btn.action = action
+        addSubview(btn)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func update(_ text: String) { label.stringValue = text }
+}
+
+// Footer icon strip: refresh · settings · about · quit
+final class FooterStripView: NSView {
+    init(buttons: [(symbol: String, hint: String, action: Selector)], target: AnyObject) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 38))
+        let slot = (frame.width - 32) / CGFloat(buttons.count)
+        for (i, b) in buttons.enumerated() {
+            let btn = NSButton(frame: NSRect(x: 16 + slot * CGFloat(i) + slot / 2 - 14, y: 5, width: 28, height: 28))
+            btn.isBordered = false
+            btn.image = NSImage(systemSymbolName: b.symbol, accessibilityDescription: b.hint)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .medium))
+            btn.imagePosition = .imageOnly
+            btn.contentTintColor = .secondaryLabelColor
+            btn.target = target
+            btn.action = b.action
+            btn.toolTip = b.hint
+            addSubview(btn)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // A fixed-width caption line, so long text can't stretch the whole menu.
 final class CaptionView: NSView {
     init(_ text: String) {
@@ -573,7 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Codex activity (tokens/turns) from the analytics endpoint — the only usage
     // signal Business/Enterprise seats get, and a nice extra for everyone else.
     private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])?
-    private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
+    private var freshLine: FreshLineView?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
     /// Claude Code can renew it — when it lapses we must say so instead of
@@ -627,10 +672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The freshness label is baked in at render time, which happens right
         // after each successful fetch — left alone it would read "just now"
         // forever. Re-stamp it with the real age at the moment of opening.
-        freshItem?.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .font: NSFont.systemFont(ofSize: 11),
-        ])
+        freshLine?.update(freshnessText)
         if let last = lastUpdateCheck, -last.timeIntervalSinceNow < 3600 { return }
         checkForUpdates()
     }
@@ -1037,7 +1079,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             appendFooter(to: menu)
             statusItem.menu = menu
-            freshItem = nil   // this menu has no freshness row
+            freshLine = nil   // this menu has no freshness row
             return
         }
 
@@ -1082,9 +1124,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 info.view = CaptionView("No usage data reported for this account")
                 menu.addItem(info)
             }
+            let fresh = NSMenuItem()
+            let line = FreshLineView(text: freshnessText, linkTitle: "Codex usage ↗",
+                                     target: self, action: #selector(openUsageFromMenu))
+            fresh.view = line
+            menu.addItem(fresh)
+            freshLine = line
             appendFooter(to: menu)
             statusItem.menu = menu
-            freshItem = nil
             statusItem.button?.attributedTitle = NSAttributedString(string: title,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor,
                              .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)])
@@ -1166,14 +1213,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             activityItems(act).forEach { menu.addItem($0) }
         }
 
-        let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
-        fresh.isEnabled = false
-        fresh.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .font: NSFont.systemFont(ofSize: 11),
-        ])
+        let fresh = NSMenuItem()
+        let line = FreshLineView(text: freshnessText,
+                                 linkTitle: Provider.current == .codex ? "Codex usage ↗" : "claude.ai usage ↗",
+                                 target: self, action: #selector(openUsageFromMenu))
+        fresh.view = line
         menu.addItem(fresh)
-        freshItem = fresh
+        freshLine = line
 
         appendFooter(to: menu)
         statusItem.menu = menu
@@ -1219,6 +1265,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func appendFooter(to menu: NSMenu) {
         let sep = NSMenuItem(); sep.view = SepView(); menu.addItem(sep)
+
+        // These two only appear when they matter — never buried in Settings.
+        if updating {
+            let it = NSMenuItem(title: "Updating… (rebuilding via brew)", action: nil, keyEquivalent: "")
+            it.isEnabled = false
+            it.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+            menu.addItem(it)
+        } else if let v = latestVersion {
+            let it = NSMenuItem(title: "Update to \(v) available…", action: #selector(installUpdate), keyEquivalent: "")
+            it.target = self
+            it.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+            menu.addItem(it)
+        }
+
+        let strip = NSMenuItem()
+        strip.view = FooterStripView(buttons: [
+            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh)),
+            (symbol: "gearshape", hint: "Settings", action: #selector(showSettingsMenu)),
+            (symbol: "info.circle", hint: "About", action: #selector(stripAbout)),
+            (symbol: "power", hint: "Quit", action: #selector(quit)),
+        ], target: self)
+        menu.addItem(strip)
+    }
+
+    private func makeSettingsMenu() -> NSMenu {
+        let menu = NSMenu()
 
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         themeItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
@@ -1278,45 +1350,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         login.image = NSImage(systemSymbolName: "power.circle", accessibilityDescription: nil)
         menu.addItem(login)
 
-        let sep2 = NSMenuItem(); sep2.view = SepView(); menu.addItem(sep2)
+        let updatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
+        updatesItem.target = self
+        updatesItem.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        menu.addItem(updatesItem)
 
-        let refreshItem = NSMenuItem(title: "Refresh now", action: #selector(refreshNow), keyEquivalent: "r")
-        refreshItem.target = self
-        refreshItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
-        menu.addItem(refreshItem)
+        return menu
+    }
 
-        let usageItem = NSMenuItem(title: Provider.current == .codex ? "Open Codex usage" : "Open claude.ai usage",
-                                   action: #selector(openUsage), keyEquivalent: "")
-        usageItem.target = self
-        usageItem.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
-        menu.addItem(usageItem)
-
-        if updating {
-            let it = NSMenuItem(title: "Updating… (rebuilding via brew)", action: nil, keyEquivalent: "")
-            it.isEnabled = false
-            it.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
-            menu.addItem(it)
-        } else if let v = latestVersion {
-            let it = NSMenuItem(title: "Update to \(v) available…", action: #selector(installUpdate), keyEquivalent: "")
-            it.target = self
-            it.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
-            menu.addItem(it)
-        } else {
-            let it = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
-            it.target = self
-            it.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
-            menu.addItem(it)
+    // Strip buttons live inside a custom view, which doesn't auto-close the
+    // menu the way real menu items do — close it explicitly first.
+    @objc private func stripRefresh() {
+        statusItem.menu?.cancelTracking()
+        refreshNow()
+    }
+    @objc private func stripAbout() {
+        statusItem.menu?.cancelTracking()
+        about()
+    }
+    @objc private func openUsageFromMenu() {
+        statusItem.menu?.cancelTracking()
+        openUsage()
+    }
+    @objc private func showSettingsMenu() {
+        statusItem.menu?.cancelTracking()
+        let m = makeSettingsMenu()
+        DispatchQueue.main.async {
+            m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         }
-
-        let aboutItem = NSMenuItem(title: "About (unofficial)", action: #selector(about), keyEquivalent: "")
-        aboutItem.target = self
-        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
-        menu.addItem(aboutItem)
-
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        quitItem.target = self
-        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
-        menu.addItem(quitItem)
     }
 
     // MARK: - Launch at Login (SMAppService — uses modern Login Items, not the EDR-locked LaunchAgents dir)
