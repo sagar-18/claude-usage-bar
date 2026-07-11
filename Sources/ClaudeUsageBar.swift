@@ -118,6 +118,16 @@ enum Provider: String, CaseIterable {
     }
     var glyph: String { self == .codex ? "⬡" : "◐" }
     var appTitle: String { self == .codex ? "Codex Usage" : "Claude Usage" }
+    /// Brand mark bundled as a template SVG — tints with the menu appearance.
+    /// Nil when running outside the .app bundle; callers fall back to `glyph`.
+    var markImage: NSImage? {
+        let name = self == .codex ? "openai" : "anthropic"
+        guard let path = Bundle.main.path(forResource: name, ofType: "svg"),
+              let img = NSImage(contentsOfFile: path) else { return nil }
+        img.isTemplate = true
+        img.size = NSSize(width: 16, height: 16)
+        return img
+    }
     var usageURL: String {
         self == .codex ? "https://chatgpt.com/codex/settings/usage"
                        : "https://claude.ai/settings/usage"
@@ -495,7 +505,7 @@ final class CaptionView: NSView {
 
 final class HeaderView: NSView {
     init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String,
-         switchGlyph: String, switchHint: String, target: AnyObject?, action: Selector?) {
+         switchGlyph: String, switchIcon: NSImage?, switchHint: String, target: AnyObject?, action: Selector?) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
 
         let iv = NSImageView(frame: NSRect(x: 16, y: 15, width: 22, height: 22))
@@ -517,10 +527,16 @@ final class HeaderView: NSView {
         // Provider toggle: shows the OTHER provider's glyph; one click switches.
         let btn = NSButton(frame: NSRect(x: frame.width - 48, y: 12, width: 32, height: 28))
         btn.isBordered = false
-        btn.attributedTitle = NSAttributedString(string: switchGlyph, attributes: [
-            .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
+        if let icon = switchIcon {
+            btn.image = icon
+            btn.imagePosition = .imageOnly
+            btn.contentTintColor = .secondaryLabelColor
+        } else {
+            btn.attributedTitle = NSAttributedString(string: switchGlyph, attributes: [
+                .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+        }
         btn.target = target
         btn.action = action
         btn.toolTip = switchHint
@@ -1006,7 +1022,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let menu = NSMenu()
             menu.delegate = self
             let other: Provider = Provider.current == .claude ? .codex : .claude
-            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
+            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchIcon: other.markImage, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
             if let warn = authWarningItem() {
@@ -1043,6 +1059,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      title: Provider.current.appTitle,
                                      subtitle: headerSubtitle,
                                      switchGlyph: other.glyph,
+                                     switchIcon: other.markImage,
                                      switchHint: "Switch to \(other.rawValue)",
                                      target: self,
                                      action: #selector(toggleProvider))

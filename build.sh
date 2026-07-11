@@ -14,8 +14,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O "$DIR/Sources/ClaudeUsageBar.swift" -o "$APP/Contents/MacOS/ClaudeUsageBar"
 
-echo "==> Adding icon…"
+echo "==> Adding icons…"
 cp "$DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$DIR/Assets/anthropic.svg" "$DIR/Assets/openai.svg" "$APP/Contents/Resources/" 2>/dev/null || true
 
 echo "==> Writing Info.plist…"
 cat > "$APP/Contents/Info.plist" <<PLIST
