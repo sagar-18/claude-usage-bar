@@ -11,12 +11,12 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ---
 
 > [!IMPORTANT]
-> **Unofficial. Not affiliated with, or endorsed by, Anthropic.**
-> This reads **your own** usage using **your own** local Claude Code login token, by calling an **undocumented** endpoint (`/api/oauth/usage`) that Anthropic may change or remove at any time. It polls gently (every 5 min by default, with exponential backoff) to respect rate limits. No data leaves your machine; there is no server, telemetry, or account beyond your existing Claude login.
+> **Unofficial. Not affiliated with, or endorsed by, Anthropic or OpenAI.**
+> This reads **your own** usage using **your own** local logins — the Claude Code token from your Keychain and/or the Codex CLI token from `~/.codex/auth.json` — by calling **undocumented** endpoints (`api.anthropic.com/api/oauth/usage`, `chatgpt.com/backend-api/wham/…`) that may change or be removed at any time. It polls gently (every 5 min by default, with exponential backoff) to respect rate limits. No data leaves your machine; there is no server, telemetry, or account beyond your existing logins.
 
 > [!WARNING]
 > **Use at your own risk — no warranty, no liability.**
-> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude / Anthropic account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoint it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it.
+> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude/Anthropic or ChatGPT/OpenAI account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoints it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it.
 
 ---
 
@@ -76,9 +76,10 @@ The app is almost certainly running fine — macOS is just not showing it. Check
 Your Claude Code sign-in token expired (it lives ~12h and only Claude Code can renew it). Open a terminal, run `claude`, let it load, then click **Refresh now** in the ◐ menu.
 
 ## Privacy
-- Reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself).
-- Talks **only** to `api.anthropic.com`. Nothing is logged, stored remotely, or sent anywhere else.
+- Claude: reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself) and talks only to `api.anthropic.com`.
+- Codex: reads the OAuth token from `~/.codex/auth.json` (created by the Codex CLI) and talks only to `chatgpt.com`.
+- Nothing is logged, stored remotely, or sent anywhere else.
 - Fully open source — read [`Sources/ClaudeUsageBar.swift`](Sources/ClaudeUsageBar.swift).
 
 ## License
-[MIT](LICENSE). "Claude" is a trademark of Anthropic; this project is not affiliated with Anthropic.
+[MIT](LICENSE). "Claude" is a trademark of Anthropic; "Codex", "ChatGPT", and the OpenAI logo are trademarks of OpenAI. This project is not affiliated with either company; marks are used only to identify the services being monitored.

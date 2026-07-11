@@ -1609,11 +1609,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let a = NSAlert()
         a.messageText = "Claude Usage Bar \(Self.currentVersion)"
         a.informativeText = """
-        Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic.
+        Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic or OpenAI.
 
-        It reads YOUR usage from YOUR local Claude Code login token and calls an undocumented endpoint that may change at any time.
+        It reads YOUR usage from YOUR own local logins — the Claude Code token in your Keychain and/or the Codex CLI token in ~/.codex — and calls undocumented endpoints that may change at any time.
 
-        USE AT YOUR OWN RISK. Provided “as is”, with no warranty of any kind. The author is NOT responsible or liable for anything that happens to your Claude / Anthropic account — including rate limiting, throttling, suspension, or termination — arising from use of this app. By using it, you accept full responsibility.
+        USE AT YOUR OWN RISK. Provided “as is”, with no warranty of any kind. The author is NOT responsible or liable for anything that happens to your Claude/Anthropic or ChatGPT/OpenAI account — including rate limiting, throttling, suspension, or termination — arising from use of this app. By using it, you accept full responsibility.
 
         MIT licensed · github.com/sagar-18/claude-usage-bar
         """

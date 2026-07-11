@@ -34,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSHumanReadableCopyright</key><string>MIT License. Unofficial — not affiliated with Anthropic.</string>
+    <key>NSHumanReadableCopyright</key><string>MIT License. Unofficial — not affiliated with Anthropic or OpenAI.</string>
 </dict>
 </plist>
 PLIST
