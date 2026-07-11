@@ -21,6 +21,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ---
 
 ## Features
+- 🔀 **Two providers** — track **Claude** (default) or **OpenAI Codex** usage; switch anytime from the menu (Provider). Codex reads your existing `codex` CLI login from `~/.codex/auth.json` and adapts to your plan: Plus/Pro show 5-hour + weekly windows, Go shows its monthly window, Business/Enterprise seats (which OpenAI meters centrally, exposing no personal windows) get an explanatory note. Menu-bar glyph tells you which is active: ◐ Claude · ⬡ Codex
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
 - 🎨 **9 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal, Catppuccin, Nord, Dracula, Terminal
 - 🧩 **4 dropdown layouts** — Classic (default), Rings (Apple Watch-style gauges), Segments (threshold-marked cells), Trend + forecast ("at this pace: 100% ≈ Sat 2 PM", from locally kept history)
@@ -35,6 +36,7 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ## Requirements
 - macOS 13+ (Ventura or later)
 - An existing **Claude Code** login (run `claude` once and sign in). The app reads the token from your Keychain — it never asks for credentials.
+- *(Optional, for Codex tracking)* an existing **Codex CLI** login (run `codex` once and sign in) — read from `~/.codex/auth.json`.
 - Xcode Command Line Tools (`xcode-select --install`) — only needed to build.
 
 ## Install

@@ -61,6 +61,7 @@ enum Theme: String, CaseIterable {
             case "session":       return rgb(0.231,0.510,0.965)
             case "weekly_all":    return rgb(0.545,0.361,0.965)
             case "weekly_scoped": return rgb(0.976,0.451,0.086)
+            case "monthly":       return rgb(0.545,0.361,0.965)
             default:              return rgb(0.392,0.455,0.545)
             }
         case .mono:
@@ -517,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.3.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -696,17 +697,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var limits: [[String: Any]] = []
         let rl = obj["rate_limit"] as? [String: Any] ?? [:]
         let iso = ISO8601DateFormatter()
-        func convert(_ w: [String: Any]?, _ kind: String) {
+        func convert(_ w: [String: Any]?, fallbackHours: Double) {
             guard let w = w, let p = w["used_percent"] as? NSNumber else { return }
-            var entry: [String: Any] = ["kind": kind, "percent": p, "is_active": false]
+            // Window length varies by plan: Plus/Pro get 5h + weekly, Go gets a
+            // single 30-day window. Label by what the API says, not by position.
+            let secs = (w["limit_window_seconds"] as? Double) ?? (fallbackHours * 3600)
+            let hours = secs / 3600
+            let kind: String, label: String, short: String
+            if hours <= 24 {
+                kind = "session"; label = "\(Int(hours))-hour session"; short = "\(Int(hours))h \(p.intValue)%"
+            } else if hours <= 24 * 14 {
+                kind = "weekly_all"; label = "Weekly"; short = "wk \(p.intValue)%"
+            } else {
+                kind = "monthly"; label = "Monthly"; short = "mo \(p.intValue)%"
+            }
+            var entry: [String: Any] = ["kind": kind, "percent": p, "is_active": false,
+                                        "label": label, "short": short]
             var reset: Date?
             if let at = w["reset_at"] as? Double { reset = Date(timeIntervalSince1970: at) }
             else if let after = w["reset_after_seconds"] as? Double { reset = Date().addingTimeInterval(after) }
             if let reset = reset { entry["resets_at"] = iso.string(from: reset) }
             limits.append(entry)
         }
-        convert(rl["primary_window"] as? [String: Any], "session")
-        convert(rl["secondary_window"] as? [String: Any], "weekly_all")
+        convert(rl["primary_window"] as? [String: Any], fallbackHours: 5)
+        convert(rl["secondary_window"] as? [String: Any], fallbackHours: 24 * 7)
         return limits
     }
 
@@ -757,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch kind {
         case "session": return "clock.fill"
         case "weekly_all": return "calendar"
+        case "monthly": return "calendar.circle.fill"
         case "weekly_scoped": return "sparkles"
         default: return "gauge.medium"
         }
@@ -920,6 +935,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 short = "\(model.prefix(3)) \(Int(pct))%"; label = "Weekly · \(model)"
             default: break
             }
+            if let overrideLabel = l["label"] as? String { label = overrideLabel }
+            if let overrideShort = l["short"] as? String { short = overrideShort }
             parts.append(short)
             infos.append((kind, label, pct, resetsIn(l["resets_at"] as? String), l["is_active"] as? Bool == true))
 
@@ -937,11 +954,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .classic:
             break
         case .rings:
-            let gauges = infos.map { i in
-                (label: i.kind == "session" ? "5h" : String(i.label.dropFirst(9)),
-                 reset: i.reset.replacingOccurrences(of: "resets in ", with: ""),
-                 pct: i.pct,
-                 color: theme.color(kind: i.kind, pct: i.pct))
+            let gauges = infos.map { i -> (label: String, reset: String, pct: Double, color: NSColor) in
+                let short: String
+                if i.kind == "session" { short = "5h" }
+                else if let tail = i.label.split(separator: "·").last {
+                    short = tail.trimmingCharacters(in: .whitespaces)
+                } else { short = i.label }
+                return (label: short,
+                        reset: i.reset.replacingOccurrences(of: "resets in ", with: ""),
+                        pct: i.pct,
+                        color: theme.color(kind: i.kind, pct: i.pct))
             }
             let item = NSMenuItem()
             item.view = RingsRowView(gauges: gauges)
