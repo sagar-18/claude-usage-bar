@@ -5,7 +5,7 @@ set -euo pipefail
 
 OUT="${1:-.}"
 APP="$OUT/ClaudeUsageBar.app"
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 DIR="$(dirname "$0")"
 
@@ -14,8 +14,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O "$DIR/Sources/ClaudeUsageBar.swift" -o "$APP/Contents/MacOS/ClaudeUsageBar"
 
-echo "==> Adding icon…"
+echo "==> Adding icons…"
 cp "$DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$DIR/Assets/anthropic.svg" "$DIR/Assets/openai.svg" "$APP/Contents/Resources/" 2>/dev/null || true
 
 echo "==> Writing Info.plist…"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -33,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSHumanReadableCopyright</key><string>MIT License. Unofficial — not affiliated with Anthropic.</string>
+    <key>NSHumanReadableCopyright</key><string>MIT License. Unofficial — not affiliated with Anthropic or OpenAI.</string>
 </dict>
 </plist>
 PLIST

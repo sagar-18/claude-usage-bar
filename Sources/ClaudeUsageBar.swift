@@ -1,4 +1,5 @@
 import Cocoa
+import QuartzCore
 import ServiceManagement
 
 // MARK: - Color helpers
@@ -118,6 +119,16 @@ enum Provider: String, CaseIterable {
     }
     var glyph: String { self == .codex ? "⬡" : "◐" }
     var appTitle: String { self == .codex ? "Codex Usage" : "Claude Usage" }
+    /// Brand mark bundled as a template SVG — tints with the menu appearance.
+    /// Nil when running outside the .app bundle; callers fall back to `glyph`.
+    var markImage: NSImage? {
+        let name = self == .codex ? "openai" : "anthropic"
+        guard let path = Bundle.main.path(forResource: name, ofType: "svg"),
+              let img = NSImage(contentsOfFile: path) else { return nil }
+        img.isTemplate = true
+        img.size = NSSize(width: 16, height: 16)
+        return img
+    }
     var usageURL: String {
         self == .codex ? "https://chatgpt.com/codex/settings/usage"
                        : "https://claude.ai/settings/usage"
@@ -447,10 +458,117 @@ final class TrendRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// MARK: - Stat row (RowView geometry, arbitrary value instead of %; used for Codex activity)
+
+final class StatRowView: NSView {
+    init(icon: String, name: String, value: String, pct: Double, caption: String, color: NSColor,
+         segmented: Bool = false) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
+        let W = frame.width
+        let iv = NSImageView(frame: NSRect(x: 16, y: 34, width: 15, height: 15))
+        iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        iv.contentTintColor = color
+        addSubview(iv)
+        let nameField = makeLabel(name, size: 13, weight: .semibold, color: .labelColor)
+        nameField.frame = NSRect(x: 40, y: 33, width: 130, height: 18)
+        addSubview(nameField)
+        let valueField = makeLabel(value, size: 14, weight: .bold,
+                                   color: color, align: .right, mono: true)
+        valueField.frame = NSRect(x: W - 176, y: 32, width: 160, height: 20)
+        addSubview(valueField)
+        let bar: NSView = segmented ? SegBarView(pct: pct, fill: color, width: W - 40 - 16)
+                                    : BarView(pct: pct, fill: color, width: W - 40 - 16)
+        bar.frame.origin = NSPoint(x: 40, y: 22)
+        addSubview(bar)
+        if !caption.isEmpty {
+            let c = makeLabel(caption, size: 11, weight: .regular, color: .secondaryLabelColor)
+            c.frame = NSRect(x: 40, y: 5, width: W - 56, height: 14)
+            addSubview(c)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// Freshness line with a trailing link: "Updated 2m ago · claude.ai usage ↗"
+final class FreshLineView: NSView {
+    private let label: NSTextField
+    init(text: String, linkTitle: String, target: AnyObject?, action: Selector?) {
+        label = makeLabel(text, size: 10.5, weight: .regular, color: .tertiaryLabelColor)
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
+        label.frame = NSRect(x: 16, y: 4, width: 160, height: 14)
+        addSubview(label)
+        let btn = NSButton(frame: NSRect(x: frame.width - 146, y: 1, width: 130, height: 20))
+        btn.isBordered = false
+        btn.alignment = .right
+        btn.attributedTitle = NSAttributedString(string: linkTitle, attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ])
+        btn.target = target
+        btn.action = action
+        addSubview(btn)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func update(_ text: String) { label.stringValue = text }
+}
+
+// Footer icon strip: refresh · settings · about · quit
+final class FooterStripView: NSView {
+    init(buttons: [(symbol: String, hint: String, action: Selector)], target: AnyObject) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 38))
+        let slot = (frame.width - 32) / CGFloat(buttons.count)
+        for (i, b) in buttons.enumerated() {
+            let btn = NSButton(frame: NSRect(x: 16 + slot * CGFloat(i) + slot / 2 - 14, y: 5, width: 28, height: 28))
+            btn.isBordered = false
+            btn.image = NSImage(systemSymbolName: b.symbol, accessibilityDescription: b.hint)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .medium))
+            btn.imagePosition = .imageOnly
+            btn.contentTintColor = .secondaryLabelColor
+            btn.target = target
+            btn.action = b.action
+            btn.toolTip = b.hint
+            addSubview(btn)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// Option row button for settings submenus: clicks don't dismiss the menu,
+// so the user can flip through options and watch changes apply live.
+final class OptionButton: NSButton {
+    var value = ""
+    var onPick: ((String) -> Void)?
+    @objc private func firePick() { onPick?(value) }
+    static func make(value: String, width: CGFloat) -> OptionButton {
+        let b = OptionButton(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+        b.isBordered = false
+        b.alignment = .left
+        b.value = value
+        b.target = b
+        b.action = #selector(firePick)
+        return b
+    }
+}
+
+// A fixed-width caption line, so long text can't stretch the whole menu.
+final class CaptionView: NSView {
+    init(_ text: String) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 20))
+        let l = makeLabel(text, size: 10.5, weight: .regular, color: .tertiaryLabelColor)
+        l.lineBreakMode = .byTruncatingTail
+        l.frame = NSRect(x: 16, y: 3, width: frame.width - 32, height: 14)
+        addSubview(l)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // MARK: - Header
 
 final class HeaderView: NSView {
-    init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String) {
+    init(worst: Double, accent: NSColor, themeSymbol: String, title: String, subtitle: String,
+         switchGlyph: String, switchIcon: NSImage?, switchHint: String, target: AnyObject?, action: Selector?) {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
 
         let iv = NSImageView(frame: NSRect(x: 16, y: 15, width: 22, height: 22))
@@ -469,10 +587,23 @@ final class HeaderView: NSView {
         sub.frame = NSRect(x: 46, y: 10, width: 200, height: 14)
         addSubview(sub)
 
-        let status = worst >= 90 ? "CRITICAL" : worst >= 70 ? "HIGH" : worst >= 40 ? "MODERATE" : "HEALTHY"
-        let pill = makeLabel(status, size: 9, weight: .heavy, color: accent, align: .right)
-        pill.frame = NSRect(x: frame.width - 116, y: 19, width: 100, height: 14)
-        addSubview(pill)
+        // Provider toggle: shows the OTHER provider's glyph; one click switches.
+        let btn = NSButton(frame: NSRect(x: frame.width - 48, y: 12, width: 32, height: 28))
+        btn.isBordered = false
+        if let icon = switchIcon {
+            btn.image = icon
+            btn.imagePosition = .imageOnly
+            btn.contentTintColor = .secondaryLabelColor
+        } else {
+            btn.attributedTitle = NSAttributedString(string: switchGlyph, attributes: [
+                .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+        }
+        btn.target = target
+        btn.action = action
+        btn.toolTip = switchHint
+        addSubview(btn)
     }
     required init?(coder: NSCoder) { fatalError() }
 }
@@ -492,6 +623,14 @@ final class SepView: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
+    /// One persistent menu whose items are swapped in place — this is what lets
+    /// the open menu update live (refresh in place, settings drill-down).
+    private let mainMenu = NSMenu()
+    private var menuIsOpen = false
+    private var inSettings = false
+    private var pendingRerender = false
+    private var contentCount = 0   // number of leading content items (before the footer)
+    private weak var settingsSubmenuItem: NSMenuItem?
     var timer: Timer?
     var updateTimer: Timer?
     var lastLimits: [[String: Any]]?
@@ -502,7 +641,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastSuccess: Date?       // when we last parsed fresh usage data
     private var planName: String?        // subscriptionType from the Keychain ("max", "pro", …)
     private var planTier: String?        // "20x"/"5x" from rateLimitTier, when present
-    private var freshItem: NSMenuItem?   // the "Updated Xm ago" row, re-stamped on menu open
+    // Codex activity (tokens/turns) from the analytics endpoint — the only usage
+    // signal Business/Enterprise seats get, and a nice extra for everyone else.
+    private var codexActivity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])?
+    private var freshLine: FreshLineView?   // the "Updated Xm ago" row, re-stamped on menu open
 
     /// Whether the Claude Code OAuth token works. The token lives ~12h and only
     /// Claude Code can renew it — when it lapses we must say so instead of
@@ -518,11 +660,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Falls back to the build-time version when run outside the .app bundle.
     /// Keep the fallback in sync with VERSION in build.sh.
     static let currentVersion =
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "◐ …"
+        mainMenu.autoenablesItems = false   // view-based items get auto-disabled otherwise, killing their buttons
+        mainMenu.delegate = self
+        statusItem.menu = mainMenu
         // Enable Launch at Login on first run only — a menu-bar tracker is
         // pointless if it dies on reboot. One-shot so a user's later opt-out sticks.
         if #available(macOS 13.0, *), !UserDefaults.standard.bool(forKey: "didDefaultLoginItem") {
@@ -552,14 +697,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A 24h timer alone leaves releases invisible for up to a day (longer with
     /// sleep, which pauses timers). Also check whenever the menu is opened, at
     /// most once an hour — the moment the user looks is the moment it matters.
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === mainMenu { menuIsOpen = false }
+        inSettings = false
+        // A setting changed while the panel was open — rebuild the dropdown so
+        // themed colors / layout apply. If the settings submenu just closed but
+        // the main menu is still open, this updates the visible rows live; if
+        // the whole menu closed, it's ready for the next open.
+        if pendingRerender {
+            pendingRerender = false
+            render()
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        if menu === mainMenu { menuIsOpen = true }
+        else { inSettings = true }   // the Settings submenu — pause content rebuilds while browsing
         // The freshness label is baked in at render time, which happens right
         // after each successful fetch — left alone it would read "just now"
         // forever. Re-stamp it with the real age at the moment of opening.
-        freshItem?.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .font: NSFont.systemFont(ofSize: 11),
-        ])
+        freshLine?.update(freshnessText)
         if let last = lastUpdateCheck, -last.timeIntervalSinceNow < 3600 { return }
         checkForUpdates()
     }
@@ -599,6 +756,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let data = provider == .codex ? self?.codexQuery() : self?.runQuery()
             let plan = provider == .codex ? (name: nil, tier: nil) : (self?.readPlan() ?? (name: nil, tier: nil))
             var codexPlan: String?
+            var activity: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])?
             var parsed: [[String: Any]]?
             var errType = ""
             if let data = data,
@@ -606,8 +764,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let err = obj["error"] as? [String: Any] {
                     errType = err["type"] as? String ?? ""
                 } else if provider == .codex {
-                    parsed = Self.mapCodex(obj)
-                    codexPlan = obj["plan_type"] as? String
+                    let usage = obj["usage"] as? [String: Any] ?? obj
+                    parsed = Self.mapCodex(usage)
+                    codexPlan = usage["plan_type"] as? String
+                    activity = Self.mapActivity(obj["activity"] as? [String: Any])
                 } else if let ls = obj["limits"] as? [[String: Any]] {
                     parsed = ls
                 }
@@ -615,7 +775,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 guard provider == Provider.current else { completion(false); return }   // switched mid-flight — drop
-                if provider == .codex { if let cp = codexPlan { self.planName = cp; self.planTier = nil } }
+                if provider == .codex {
+                    if let cp = codexPlan { self.planName = cp; self.planTier = nil }
+                    if let act = activity { self.codexActivity = act }
+                }
                 else if let p = plan.name { self.planName = p; self.planTier = plan.tier }
                 if let ls = parsed {
                     self.lastLimits = ls
@@ -677,7 +840,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           -H "User-Agent: claude-usage-bar")
         CODE=$(printf '%s' "$RESP" | tail -1)
         if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then echo '{"error":{"type":"authentication_error"}}'; exit 0; fi
-        printf '%s' "$RESP" | sed '$d'
+        BODY=$(printf '%s' "$RESP" | sed '$d')
+        END=$(date +%Y-%m-%d); START=$(date -v-6d +%Y-%m-%d)
+        ACT=$(curl -s --max-time 8 "https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts?start_date=$START&end_date=$END&group_by=day&workspace_user=true" \\
+          -H "Authorization: Bearer $TOKEN" \\
+          -H "Accept: application/json" \\
+          -H "ChatGPT-Account-Id: $ACCT" \\
+          -H "User-Agent: claude-usage-bar")
+        case "$BODY" in "{"*) ;; *) BODY='{}';; esac
+        case "$ACT" in "{"*) ;; *) ACT='{}';; esac
+        printf '{"usage":%s,"activity":%s}' "$BODY" "$ACT"
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -722,6 +894,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         convert(rl["primary_window"] as? [String: Any], fallbackHours: 5)
         convert(rl["secondary_window"] as? [String: Any], fallbackHours: 24 * 7)
         return limits
+    }
+
+    private static func mapActivity(_ a: [String: Any]?) -> (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])? {
+        guard let rows = a?["data"] as? [[String: Any]], !rows.isEmpty else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        var byDate: [String: (tok: Int, turns: Int)] = [:]
+        for r in rows {
+            guard let date = r["date"] as? String else { continue }
+            let totals = r["totals"] as? [String: Any] ?? [:]
+            byDate[date] = ((totals["text_total_tokens"] as? NSNumber)?.intValue ?? 0,
+                            (totals["turns"] as? NSNumber)?.intValue ?? 0)
+        }
+        // Dense 7-day series (API omits zero days) so sparklines have real shape.
+        var days: [Int] = []
+        var todayTok = 0, todayTurns = 0, weekTok = 0, weekTurns = 0, peak = 0
+        for offset in stride(from: -6, through: 0, by: 1) {
+            let date = fmt.string(from: Calendar.current.date(byAdding: .day, value: offset, to: Date()) ?? Date())
+            let d = byDate[date] ?? (0, 0)
+            days.append(d.tok)
+            weekTok += d.tok
+            weekTurns += d.turns
+            peak = max(peak, d.tok)
+            if offset == 0 { todayTok = d.tok; todayTurns = d.turns }
+        }
+        return (todayTok, todayTurns, weekTok, weekTurns, peak, days)
     }
 
     /// Reads subscriptionType ("max", "pro", …) and the "20x"/"5x" multiplier
@@ -813,6 +1011,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Rendering (main thread only; no network)
 
+    private struct LimitInfo {
+        let kind: String, label: String, short: String
+        let pct: Double
+        let reset: String
+        let active: Bool
+    }
+
+    private func limitInfos(_ limits: [[String: Any]]) -> [LimitInfo] {
+        var out: [LimitInfo] = []
+        for l in limits {
+            let kind = l["kind"] as? String ?? ""
+            let pct = (l["percent"] as? NSNumber)?.doubleValue ?? 0
+            var short = "\(Int(pct))%"
+            var label = kind
+            switch kind {
+            case "session":
+                short = "5h \(Int(pct))%"; label = "5-hour session"
+            case "weekly_all":
+                short = "wk \(Int(pct))%"; label = "Weekly · all models"
+            case "weekly_scoped":
+                let model = ((l["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String ?? "scoped"
+                short = "\(model.prefix(3)) \(Int(pct))%"; label = "Weekly · \(model)"
+            default: break
+            }
+            if let overrideLabel = l["label"] as? String { label = overrideLabel }
+            if let overrideShort = l["short"] as? String { short = overrideShort }
+            out.append(LimitInfo(kind: kind, label: label, short: short, pct: pct,
+                                 reset: resetsIn(l["resets_at"] as? String),
+                                 active: l["is_active"] as? Bool == true))
+        }
+        return out
+    }
+
+    /// Sets the menu-bar title, appending a blue ↑ when an update is available
+    /// so it's noticeable without opening the menu.
+    private func setStatusTitle(_ text: String, color: NSColor) {
+        let s = NSMutableAttributedString(string: text, attributes: [
+            .foregroundColor: color,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
+        ])
+        if latestVersion != nil && !updating {
+            s.append(NSAttributedString(string: (text.isEmpty ? "↑" : " ↑"), attributes: [
+                .foregroundColor: NSColor.systemBlue,
+                .font: NSFont.systemFont(ofSize: 12.5, weight: .bold),
+            ]))
+        }
+        statusItem.button?.attributedTitle = s
+    }
+
+    /// Recomputes the menu-bar title/icon from current state. Separate from
+    /// render() so settings changes can apply live while the menu stays open.
+    private func updateStatusTitle() {
+        let theme = Theme.current
+        let glyph = Provider.current.glyph
+        guard let limits = lastLimits else {
+            let noDataTitle = (authState == .expired || authState == .missing) ? "\(glyph) ⚠︎" : "\(glyph) …"
+            setStatusTitle(noDataTitle, color: .secondaryLabelColor)
+            statusItem.button?.image = nil
+            return
+        }
+        if limits.isEmpty {
+            var t = "\(glyph) —"
+            if let act = codexActivity { t = "\(glyph) \(tokenText(act.todayTokens))" }
+            setStatusTitle(t, color: .secondaryLabelColor)
+            statusItem.button?.image = nil
+            return
+        }
+        let infos = limitInfos(limits)
+        let parts = infos.map { $0.short }
+        var worst = 0.0, worstKind = ""
+        for i in infos where i.pct > worst { worst = i.pct; worstKind = i.kind }
+        var titleColor = theme.accent(worst: worst, worstKind: worstKind)
+        let title: String
+        switch BarStyle.current {
+        case .full:
+            title = "\(glyph) " + parts.joined(separator: " · ")
+        case .compact:
+            title = "\(glyph) \(Int(worst))%"
+        case .session:
+            if let s = infos.first(where: { $0.kind == "session" }) {
+                title = "\(glyph) 5h \(Int(s.pct))%"
+                titleColor = theme.color(kind: "session", pct: s.pct)
+            } else {
+                title = "\(glyph) " + parts.joined(separator: " · ")
+            }
+        case .ring:
+            title = ""   // the ring image below is the whole icon
+        }
+        // Stale data (token lapsed) gets a visible ⚠︎ and loses its color —
+        // never let old numbers pass as live.
+        var finalTitle = title
+        if authState == .expired || authState == .missing {
+            finalTitle = title + " ⚠︎"
+            titleColor = .secondaryLabelColor
+        }
+        setStatusTitle(finalTitle, color: titleColor)
+        if BarStyle.current == .ring {
+            statusItem.button?.image = ringImage(pct: worst, color: titleColor)
+            statusItem.button?.imagePosition = finalTitle.isEmpty ? .imageOnly : .imageLeading
+        } else {
+            statusItem.button?.image = nil
+        }
+    }
+
     private var freshnessText: String {
         guard let t = lastSuccess else { return "No data yet" }
         let secs = Int(-t.timeIntervalSinceNow)
@@ -820,6 +1122,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let m = secs / 60
         if m < 60 { return "Updated \(m)m ago" }
         return "Updated \(m / 60)h \(m % 60)m ago"
+    }
+
+    private func tokenText(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
+        return "\(n)"
+    }
+
+    private func activityItems(_ act: (todayTokens: Int, todayTurns: Int, weekTokens: Int, weekTurns: Int, peakTokens: Int, days: [Int])) -> [NSMenuItem] {
+        func turns(_ n: Int) -> String { n == 1 ? "1 turn" : "\(n) turns" }
+        let theme = Theme.current
+        let peak = max(act.peakTokens, 1)
+        let todayPct = Double(act.todayTokens) / Double(peak) * 100
+        let avg = act.weekTokens / 7
+        let avgPct = Double(avg) / Double(peak) * 100
+        let todayColor = theme.color(kind: "session", pct: 0)
+        let weekColor = theme.color(kind: "weekly_all", pct: 0)
+        let todayCaption = act.todayTokens == 0 ? "no usage yet today"
+                         : "vs busiest day this week (\(tokenText(act.peakTokens)))"
+
+        switch LayoutStyle.current {
+        case .rings:
+            let item = NSMenuItem()
+            item.view = RingsRowView(gauges: [
+                (label: "today", reset: "\(tokenText(act.todayTokens)) tok", pct: todayPct, color: todayColor),
+                (label: "daily avg", reset: "\(tokenText(avg)) tok", pct: avgPct, color: weekColor),
+                (label: "7d total", reset: "\(tokenText(act.weekTokens)) tok", pct: 100, color: weekColor),
+            ])
+            return [item]
+        case .trend:
+            let points = act.days.enumerated().map { (t: Double($0.offset), p: Double($0.element) / Double(peak) * 100) }
+            let item = NSMenuItem()
+            item.view = TrendRowView(icon: "bolt.fill", name: "Daily tokens", pct: todayPct,
+                                     caption: "today \(tokenText(act.todayTokens)) · 7d \(tokenText(act.weekTokens)) · peak \(tokenText(act.peakTokens))",
+                                     active: false, color: todayColor, points: points)
+            return [item]
+        case .classic, .segments:
+            let seg = LayoutStyle.current == .segments
+            let today = NSMenuItem()
+            today.view = StatRowView(icon: "bolt.fill", name: "Today",
+                                     value: "\(tokenText(act.todayTokens)) tok · \(turns(act.todayTurns))",
+                                     pct: todayPct, caption: todayCaption, color: todayColor, segmented: seg)
+            let week = NSMenuItem()
+            week.view = StatRowView(icon: "calendar", name: "Last 7 days",
+                                    value: "\(tokenText(act.weekTokens)) tok · \(turns(act.weekTurns))",
+                                    pct: avgPct, caption: "daily average \(tokenText(avg)) tok",
+                                    color: weekColor, segmented: seg)
+            return [today, week]
+        }
     }
 
     private var headerSubtitle: String {
@@ -850,17 +1201,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render() {
+        // Don't yank the whole menu (incl. the open settings submenu) out from
+        // under the user mid-browse — settings changes go through liveUpdate().
+        if inSettings && menuIsOpen { return }
+        mainMenu.removeAllItems()
+        updateStatusTitle()
+        contentCount = buildContent(into: mainMenu)
+        appendFooter(to: mainMenu)
+    }
+
+    /// Rebuild only the content rows (header … freshness) in place, leaving the
+    /// footer and its open settings submenu untouched — this is what makes
+    /// theme/layout changes apply instantly while the panel stays open.
+    private func liveUpdateContent() {
+        guard menuIsOpen else { render(); return }
+        updateStatusTitle()
+        let tmp = NSMenu()
+        let newCount = buildContent(into: tmp)
+        let fresh = tmp.items
+        tmp.removeAllItems()   // detach so items can re-parent into mainMenu
+        for _ in 0..<contentCount where mainMenu.numberOfItems > 0 { mainMenu.removeItem(at: 0) }
+        for (i, it) in fresh.enumerated() { mainMenu.insertItem(it, at: i) }
+        contentCount = newCount
+    }
+
+    /// Builds the content rows (everything above the footer) into `menu` and
+    /// returns how many items it added. Sets freshLine as a side effect.
+    @discardableResult
+    private func buildContent(into menu: NSMenu) -> Int {
+        let start = menu.numberOfItems
         let theme = Theme.current
 
-        let glyph = Provider.current.glyph
         guard let limits = lastLimits else {
-            let noDataTitle = (authState == .expired || authState == .missing) ? "\(glyph) ⚠︎" : "\(glyph) …"
-            statusItem.button?.attributedTitle = NSAttributedString(string: noDataTitle,
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor])
-            statusItem.button?.image = nil
-            let menu = NSMenu()
-            menu.delegate = self
-            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle)
+            let other: Provider = Provider.current == .claude ? .codex : .claude
+            let h = NSMenuItem(); h.view = HeaderView(worst: 0, accent: theme.accent(worst: 0, worstKind: ""), themeSymbol: theme.symbol, title: Provider.current.appTitle, subtitle: headerSubtitle, switchGlyph: other.glyph, switchIcon: other.markImage, switchHint: "Switch to \(other.rawValue)", target: self, action: #selector(toggleProvider))
             menu.addItem(h)
             let s = NSMenuItem(); s.view = SepView(); menu.addItem(s)
             if let warn = authWarningItem() {
@@ -873,13 +1247,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 info.isEnabled = false
                 menu.addItem(info)
             }
-            appendFooter(to: menu)
-            statusItem.menu = menu
-            freshItem = nil   // this menu has no freshness row
-            return
+            freshLine = nil   // this menu has no freshness row
+            return menu.numberOfItems - start
         }
 
-        var parts: [String] = []
         var worst = 0.0
         var worstKind = ""
         for l in limits {
@@ -887,65 +1258,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if p > worst { worst = p; worstKind = l["kind"] as? String ?? "" }
         }
 
-        let menu = NSMenu()
-        menu.delegate = self
         let headerItem = NSMenuItem()
+        let other: Provider = Provider.current == .claude ? .codex : .claude
         headerItem.view = HeaderView(worst: worst,
                                      accent: theme.accent(worst: worst, worstKind: worstKind),
                                      themeSymbol: theme.symbol,
                                      title: Provider.current.appTitle,
-                                     subtitle: headerSubtitle)
+                                     subtitle: headerSubtitle,
+                                     switchGlyph: other.glyph,
+                                     switchIcon: other.markImage,
+                                     switchHint: "Switch to \(other.rawValue)",
+                                     target: self,
+                                     action: #selector(toggleProvider))
         menu.addItem(headerItem)
         let sep0 = NSMenuItem(); sep0.view = SepView(); menu.addItem(sep0)
 
         if let warn = authWarningItem() { menu.addItem(warn) }
 
         if limits.isEmpty {
-            // Codex Business/Enterprise seats report no rate-limit windows.
-            let msg = NSMenuItem(title: "No rate-limit windows reported for this account", action: nil, keyEquivalent: "")
-            msg.isEnabled = false
-            menu.addItem(msg)
-            let info = NSMenuItem(title: "Business/Enterprise plans meter usage centrally", action: nil, keyEquivalent: "")
-            info.isEnabled = false
-            menu.addItem(info)
-            appendFooter(to: menu)
-            statusItem.menu = menu
-            freshItem = nil
-            statusItem.button?.attributedTitle = NSAttributedString(string: "\(glyph) —",
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor,
-                             .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)])
-            statusItem.button?.image = nil
-            return
+            // Codex Business/Enterprise seats report no rate-limit windows —
+            // show token activity from the analytics endpoint instead.
+            if let act = codexActivity {
+                activityItems(act).forEach { menu.addItem($0) }
+            }
+            if codexActivity == nil {
+                // Only when there's nothing at all to show.
+                let info = NSMenuItem()
+                info.view = CaptionView("No usage data reported for this account")
+                menu.addItem(info)
+            }
+            let fresh = NSMenuItem()
+            let line = FreshLineView(text: freshnessText, linkTitle: "Codex usage ↗",
+                                     target: self, action: #selector(openUsageFromMenu))
+            fresh.view = line
+            menu.addItem(fresh)
+            freshLine = line
+            return menu.numberOfItems - start
         }
 
         let layout = LayoutStyle.current
-        var infos: [(kind: String, label: String, pct: Double, reset: String, active: Bool)] = []
-        for l in limits {
-            let kind = l["kind"] as? String ?? ""
-            let pct = (l["percent"] as? NSNumber)?.doubleValue ?? 0
-            var short = "\(Int(pct))%"
-            var label = kind
-            switch kind {
-            case "session":
-                short = "5h \(Int(pct))%"; label = "5-hour session"
-            case "weekly_all":
-                short = "wk \(Int(pct))%"; label = "Weekly · all models"
-            case "weekly_scoped":
-                let model = ((l["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String ?? "scoped"
-                short = "\(model.prefix(3)) \(Int(pct))%"; label = "Weekly · \(model)"
-            default: break
-            }
-            if let overrideLabel = l["label"] as? String { label = overrideLabel }
-            if let overrideShort = l["short"] as? String { short = overrideShort }
-            parts.append(short)
-            infos.append((kind, label, pct, resetsIn(l["resets_at"] as? String), l["is_active"] as? Bool == true))
-
-            if layout == .classic {
+        let infos = limitInfos(limits)
+        if layout == .classic {
+            for i in infos {
                 let item = NSMenuItem()
-                item.view = RowView(icon: iconFor(kind), name: label, pct: pct,
-                                    reset: resetsIn(l["resets_at"] as? String),
-                                    active: (l["is_active"] as? Bool == true),
-                                    color: theme.color(kind: kind, pct: pct))
+                item.view = RowView(icon: iconFor(i.kind), name: i.label, pct: i.pct,
+                                    reset: i.reset, active: i.active,
+                                    color: theme.color(kind: i.kind, pct: i.pct))
                 menu.addItem(item)
             }
         }
@@ -988,144 +1346,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        let fresh = NSMenuItem(title: freshnessText, action: nil, keyEquivalent: "")
-        fresh.isEnabled = false
-        fresh.attributedTitle = NSAttributedString(string: freshnessText, attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .font: NSFont.systemFont(ofSize: 11),
-        ])
+        if Provider.current == .codex, let act = codexActivity {
+            activityItems(act).forEach { menu.addItem($0) }
+        }
+
+        let fresh = NSMenuItem()
+        let line = FreshLineView(text: freshnessText,
+                                 linkTitle: Provider.current == .codex ? "Codex usage ↗" : "claude.ai usage ↗",
+                                 target: self, action: #selector(openUsageFromMenu))
+        fresh.view = line
         menu.addItem(fresh)
-        freshItem = fresh
+        freshLine = line
 
-        appendFooter(to: menu)
-        statusItem.menu = menu
-
-        // Menu-bar title per the user's chosen style. Narrower styles help on
-        // notched MacBooks, where a crowded menu bar silently hides wide items.
-        let title: String
-        var titleColor = theme.accent(worst: worst, worstKind: worstKind)
-        switch BarStyle.current {
-        case .full:
-            title = "\(glyph) " + parts.joined(separator: " · ")
-        case .compact:
-            title = "\(glyph) \(Int(worst))%"
-        case .session:
-            if let s = limits.first(where: { ($0["kind"] as? String) == "session" }) {
-                let p = (s["percent"] as? NSNumber)?.doubleValue ?? 0
-                title = "\(glyph) 5h \(Int(p))%"
-                titleColor = theme.color(kind: "session", pct: p)
-            } else {
-                title = "\(glyph) " + parts.joined(separator: " · ")
-            }
-        case .ring:
-            title = ""   // the ring image below is the whole icon
-        }
-        // Stale data (token lapsed) gets a visible ⚠︎ and loses its color —
-        // never let old numbers pass as live.
-        var finalTitle = title
-        if authState == .expired || authState == .missing {
-            finalTitle = title + " ⚠︎"
-            titleColor = .secondaryLabelColor
-        }
-        statusItem.button?.attributedTitle = NSAttributedString(string: finalTitle, attributes: [
-            .foregroundColor: titleColor,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
-        ])
-        if BarStyle.current == .ring {
-            statusItem.button?.image = ringImage(pct: worst, color: titleColor)
-            statusItem.button?.imagePosition = finalTitle.isEmpty ? .imageOnly : .imageLeading
-        } else {
-            statusItem.button?.image = nil
-        }
+        return menu.numberOfItems - start
     }
 
     private func appendFooter(to menu: NSMenu) {
         let sep = NSMenuItem(); sep.view = SepView(); menu.addItem(sep)
 
-        let providerItem = NSMenuItem(title: "Provider", action: nil, keyEquivalent: "")
-        providerItem.image = NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)
-        let providerMenu = NSMenu()
-        for p in Provider.allCases {
-            let it = NSMenuItem(title: p.rawValue, action: #selector(selectProvider(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = p.rawValue
-            it.state = (p == Provider.current) ? .on : .off
-            providerMenu.addItem(it)
-        }
-        providerItem.submenu = providerMenu
-        menu.addItem(providerItem)
-
-        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
-        themeItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
-        let themeMenu = NSMenu()
-        for t in Theme.allCases {
-            let it = NSMenuItem(title: t.rawValue, action: #selector(selectTheme(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = t.rawValue
-            it.state = (t == Theme.current) ? .on : .off
-            themeMenu.addItem(it)
-        }
-        themeItem.submenu = themeMenu
-        menu.addItem(themeItem)
-
-        let styleItem = NSMenuItem(title: "Menu Bar Style", action: nil, keyEquivalent: "")
-        styleItem.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: nil)
-        let styleMenu = NSMenu()
-        for s in BarStyle.allCases {
-            let it = NSMenuItem(title: s.rawValue, action: #selector(selectStyle(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = s.rawValue
-            it.state = (s == BarStyle.current) ? .on : .off
-            styleMenu.addItem(it)
-        }
-        styleItem.submenu = styleMenu
-        menu.addItem(styleItem)
-
-        let layoutItem = NSMenuItem(title: "Layout", action: nil, keyEquivalent: "")
-        layoutItem.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
-        let layoutMenu = NSMenu()
-        for s in LayoutStyle.allCases {
-            let it = NSMenuItem(title: s.rawValue, action: #selector(selectLayout(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = s.rawValue
-            it.state = (s == LayoutStyle.current) ? .on : .off
-            layoutMenu.addItem(it)
-        }
-        layoutItem.submenu = layoutMenu
-        menu.addItem(layoutItem)
-
-        let refreshMenuItem = NSMenuItem(title: "Auto Refresh", action: nil, keyEquivalent: "")
-        refreshMenuItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)
-        let rMenu = NSMenu()
-        for mins in [1, 2, 5, 10, 15, 30, 60] {
-            let it = NSMenuItem(title: "\(mins) min", action: #selector(selectRefresh(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = mins
-            it.state = (mins == AppDelegate.refreshMinutes) ? .on : .off
-            rMenu.addItem(it)
-        }
-        refreshMenuItem.submenu = rMenu
-        menu.addItem(refreshMenuItem)
-
-        let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
-        login.target = self
-        login.state = loginEnabled ? .on : .off
-        login.image = NSImage(systemSymbolName: "power.circle", accessibilityDescription: nil)
-        menu.addItem(login)
-
-        let sep2 = NSMenuItem(); sep2.view = SepView(); menu.addItem(sep2)
-
-        let refreshItem = NSMenuItem(title: "Refresh now", action: #selector(refreshNow), keyEquivalent: "r")
-        refreshItem.target = self
-        refreshItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
-        menu.addItem(refreshItem)
-
-        let usageItem = NSMenuItem(title: Provider.current == .codex ? "Open Codex usage" : "Open claude.ai usage",
-                                   action: #selector(openUsage), keyEquivalent: "")
-        usageItem.target = self
-        usageItem.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
-        menu.addItem(usageItem)
-
+        // These two only appear when they matter — never buried in Settings.
         if updating {
             let it = NSMenuItem(title: "Updating… (rebuilding via brew)", action: nil, keyEquivalent: "")
             it.isEnabled = false
@@ -1136,22 +1375,165 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             it.target = self
             it.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
             menu.addItem(it)
-        } else {
-            let it = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
-            it.target = self
-            it.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
-            menu.addItem(it)
         }
 
-        let aboutItem = NSMenuItem(title: "About (unofficial)", action: #selector(about), keyEquivalent: "")
-        aboutItem.target = self
-        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
-        menu.addItem(aboutItem)
+        // 4-icon strip. The gear opens the settings submenu BESIDE the menu:
+        // the strip row carries the submenu, so macOS opens it natively (auto
+        // left/right) — reliable, unlike popUp from inside a tracking menu.
+        let sub = makeSettingsMenu()
+        sub.delegate = self
+        let strip = NSMenuItem()
+        let stripView = FooterStripView(buttons: [
+            (symbol: "arrow.clockwise", hint: "Refresh now", action: #selector(stripRefresh(_:))),
+            (symbol: "gearshape", hint: "Settings", action: #selector(openSettingsSubmenu(_:))),
+            (symbol: "info.circle", hint: "About", action: #selector(stripAbout(_:))),
+            (symbol: "power", hint: "Quit", action: #selector(quit)),
+        ], target: self)
+        strip.view = stripView
+        strip.submenu = sub
+        settingsSubmenuItem = strip
+        menu.addItem(strip)
+    }
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        quitItem.target = self
-        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
-        menu.addItem(quitItem)
+    /// The gear button highlights the strip row, which makes macOS open its
+    /// attached submenu to the side — the same mechanism as hovering it.
+    @objc private func openSettingsSubmenu(_ sender: NSButton) {
+        guard let item = settingsSubmenuItem, let menu = item.menu else { return }
+        let idx = menu.index(of: item)
+        if idx >= 0 { menu.performActionForItem(at: idx) }
+    }
+
+    /// A submenu of view-based option rows: picking one does NOT dismiss the
+    /// menu — the checkmark moves and the change applies live.
+    private func optionsMenu(_ options: [String], current: @escaping () -> String,
+                             apply: @escaping (String) -> Void) -> NSMenu {
+        let m = NSMenu()
+        m.autoenablesItems = false
+        var buttons: [OptionButton] = []
+        func restyle() {
+            for b in buttons {
+                let on = b.value == current()
+                b.attributedTitle = NSAttributedString(string: (on ? "✓  " : "     ") + b.value, attributes: [
+                    .font: NSFont.menuFont(ofSize: 13),
+                    .foregroundColor: NSColor.labelColor,
+                ])
+            }
+        }
+        for value in options {
+            let b = OptionButton.make(value: value, width: 190)
+            b.onPick = { [weak self] v in
+                apply(v)
+                restyle()
+                self?.liveUpdateContent()   // rebuild rows in place — instant, panel stays open
+            }
+            buttons.append(b)
+            let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
+            b.frame = NSRect(x: 12, y: 0, width: 190, height: 24)
+            wrap.addSubview(b)
+            let item = NSMenuItem()
+            item.view = wrap
+            m.addItem(item)
+        }
+        restyle()
+        return m
+    }
+
+    private func makeSettingsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        func submenuItem(_ title: String, _ symbol: String, _ sub: NSMenu) -> NSMenuItem {
+            let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            it.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            it.submenu = sub
+            return it
+        }
+
+        menu.addItem(submenuItem("Theme", "paintpalette", optionsMenu(
+            Theme.allCases.map { $0.rawValue },
+            current: { Theme.current.rawValue },
+            apply: { if let t = Theme(rawValue: $0) { Theme.current = t } })))
+
+        menu.addItem(submenuItem("Menu Bar Style", "arrow.left.and.right", optionsMenu(
+            BarStyle.allCases.map { $0.rawValue },
+            current: { BarStyle.current.rawValue },
+            apply: { if let s = BarStyle(rawValue: $0) { BarStyle.current = s } })))
+
+        menu.addItem(submenuItem("Layout", "square.grid.2x2", optionsMenu(
+            LayoutStyle.allCases.map { $0.rawValue },
+            current: { LayoutStyle.current.rawValue },
+            apply: { if let s = LayoutStyle(rawValue: $0) { LayoutStyle.current = s } })))
+
+        menu.addItem(submenuItem("Auto Refresh", "timer", optionsMenu(
+            [1, 2, 5, 10, 15, 30, 60].map { "\($0) min" },
+            current: { "\(AppDelegate.refreshMinutes) min" },
+            apply: { [weak self] v in
+                guard let mins = Int(v.replacingOccurrences(of: " min", with: "")) else { return }
+                AppDelegate.refreshMinutes = mins
+                self?.backoff = 0
+                self?.scheduleNext(TimeInterval(mins * 60))
+            })))
+
+        // Launch at Login: view-based toggle so the menu stays open.
+        let loginWrap = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 24))
+        let loginBtn = OptionButton.make(value: "Launch at Login", width: 190)
+        loginBtn.frame = NSRect(x: 12, y: 0, width: 190, height: 24)
+        let styleLogin = { [weak self] in
+            loginBtn.attributedTitle = NSAttributedString(
+                string: ((self?.loginEnabled ?? false) ? "✓  " : "     ") + "Launch at Login",
+                attributes: [.font: NSFont.menuFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+        }
+        loginBtn.onPick = { [weak self] _ in
+            self?.toggleLoginQuiet()
+            styleLogin()
+        }
+        styleLogin()
+        loginWrap.addSubview(loginBtn)
+        let loginItem = NSMenuItem()
+        loginItem.view = loginWrap
+        menu.addItem(loginItem)
+
+        let updatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdatesClicked), keyEquivalent: "")
+        updatesItem.target = self
+        updatesItem.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        menu.addItem(updatesItem)
+
+        return menu
+    }
+
+    // Buttons inside menu-item views don't auto-close the menu like real menu
+    // items do, and statusItem.menu?.cancelTracking() doesn't reliably reach
+    // the tracking session — go through the button's enclosingMenuItem.
+    private func closeMenu(from sender: Any?) {
+        var v = sender as? NSView
+        while let cur = v {
+            if let item = cur.enclosingMenuItem { item.menu?.cancelTracking(); return }
+            v = cur.superview
+        }
+        statusItem.menu?.cancelTracking()
+    }
+    @objc private func stripRefresh(_ sender: NSButton) {
+        // Keep the menu open: spin the icon while fetching. The live item swap
+        // on completion replaces the strip, which naturally ends the spin.
+        sender.wantsLayer = true
+        if let layer = sender.layer {
+            layer.position = CGPoint(x: layer.frame.midX, y: layer.frame.midY)
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.toValue = -2 * Double.pi
+            spin.duration = 0.8
+            spin.repeatCount = .infinity
+            layer.add(spin, forKey: "spin")
+        }
+        refreshNow()
+    }
+    @objc private func stripAbout(_ sender: NSButton) {
+        closeMenu(from: sender)
+        about()
+    }
+    @objc private func openUsageFromMenu(_ sender: NSButton) {
+        closeMenu(from: sender)
+        openUsage()
     }
 
     // MARK: - Launch at Login (SMAppService — uses modern Login Items, not the EDR-locked LaunchAgents dir)
@@ -1161,6 +1543,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
     @objc private func toggleLogin() {
+        toggleLoginQuiet()
+        render()
+    }
+
+    /// Toggle without a render() — for the live settings panel, where render
+    /// would yank the open submenu out from under the user.
+    private func toggleLoginQuiet() {
         guard #available(macOS 13.0, *) else { return }
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -1174,7 +1563,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.informativeText = "\(error.localizedDescription)\n\nOn managed/corporate Macs this may be restricted by device policy."
             a.runModal()
         }
-        render()
     }
 
     // MARK: - Updates (GitHub releases check + one-click `brew` upgrade)
@@ -1297,16 +1685,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             render()   // no network — just recolor from last data
         }
     }
-    @objc private func selectProvider(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let p = Provider(rawValue: raw), p != Provider.current else { return }
-        Provider.current = p
+    @objc private func toggleProvider(_ sender: Any?) {
+        closeMenu(from: sender)   // close the open menu before rebuilding it
+        Provider.current = Provider.current == .claude ? .codex : .claude
         // The cached data belongs to the other provider — drop it and refetch.
         lastLimits = nil
         lastSuccess = nil
         authState = .unknown
         planName = nil
         planTier = nil
+        codexActivity = nil
         render()
         refreshNow()
     }
@@ -1337,11 +1725,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let a = NSAlert()
         a.messageText = "Claude Usage Bar \(Self.currentVersion)"
         a.informativeText = """
-        Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic.
+        Unofficial menu-bar usage tracker. Not affiliated with, or endorsed by, Anthropic or OpenAI.
 
-        It reads YOUR usage from YOUR local Claude Code login token and calls an undocumented endpoint that may change at any time.
+        It reads YOUR usage from YOUR own local logins — the Claude Code token in your Keychain and/or the Codex CLI token in ~/.codex — and calls undocumented endpoints that may change at any time.
 
-        USE AT YOUR OWN RISK. Provided “as is”, with no warranty of any kind. The author is NOT responsible or liable for anything that happens to your Claude / Anthropic account — including rate limiting, throttling, suspension, or termination — arising from use of this app. By using it, you accept full responsibility.
+        USE AT YOUR OWN RISK. Provided “as is”, with no warranty of any kind. The author is NOT responsible or liable for anything that happens to your Claude/Anthropic or ChatGPT/OpenAI account — including rate limiting, throttling, suspension, or termination — arising from use of this app. By using it, you accept full responsibility.
 
         MIT licensed · github.com/sagar-18/claude-usage-bar
         """

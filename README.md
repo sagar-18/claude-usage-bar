@@ -11,17 +11,17 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 ---
 
 > [!IMPORTANT]
-> **Unofficial. Not affiliated with, or endorsed by, Anthropic.**
-> This reads **your own** usage using **your own** local Claude Code login token, by calling an **undocumented** endpoint (`/api/oauth/usage`) that Anthropic may change or remove at any time. It polls gently (every 5 min by default, with exponential backoff) to respect rate limits. No data leaves your machine; there is no server, telemetry, or account beyond your existing Claude login.
+> **Unofficial. Not affiliated with, or endorsed by, Anthropic or OpenAI.**
+> This reads **your own** usage using **your own** local logins — the Claude Code token from your Keychain and/or the Codex CLI token from `~/.codex/auth.json` — by calling **undocumented** endpoints (`api.anthropic.com/api/oauth/usage`, `chatgpt.com/backend-api/wham/…`) that may change or be removed at any time. It polls gently (every 5 min by default, with exponential backoff) to respect rate limits. No data leaves your machine; there is no server, telemetry, or account beyond your existing logins.
 
 > [!WARNING]
 > **Use at your own risk — no warranty, no liability.**
-> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude / Anthropic account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoint it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it.
+> This software is provided **"as is"**, without warranty of any kind. The author and contributors are **not responsible or liable** for anything that happens to your Claude/Anthropic or ChatGPT/OpenAI account — including but not limited to rate limiting, throttling, suspension, or termination — arising from the use of this application or the undocumented endpoints it calls. It relies on an unofficial, undocumented API that can change or break without notice. **By installing or using it, you accept full responsibility.** If you are unsure, don't use it.
 
 ---
 
 ## Features
-- 🔀 **Two providers** — track **Claude** (default) or **OpenAI Codex** usage; switch anytime from the menu (Provider). Codex reads your existing `codex` CLI login from `~/.codex/auth.json` and adapts to your plan: Plus/Pro show 5-hour + weekly windows, Go shows its monthly window, Business/Enterprise seats (which OpenAI meters centrally, exposing no personal windows) get an explanatory note. Menu-bar glyph tells you which is active: ◐ Claude · ⬡ Codex
+- 🔀 **Two providers** — track **Claude** (default) or **OpenAI Codex** usage; switch instantly with the brand-mark toggle in the dropdown header. Codex reads your existing `codex` CLI login from `~/.codex/auth.json` and adapts to your plan: Plus/Pro show 5-hour + weekly windows, Go shows its monthly window, Business/Enterprise seats (which OpenAI meters centrally, exposing no personal windows) fall back to token/turn activity from the analytics API. Menu-bar glyph tells you which is active: ◐ Claude · ⬡ Codex
 - 🎯 Exact **session / weekly / scoped** percentages (same numbers as the claude.ai usage page)
 - 🎨 **9 themes** — Ocean (default), Severity, Claude, Per-Metric, Minimal, Catppuccin, Nord, Dracula, Terminal
 - 🧩 **4 dropdown layouts** — Classic (default), Rings (Apple Watch-style gauges), Segments (threshold-marked cells), Trend + forecast ("at this pace: 100% ≈ Sat 2 PM", from locally kept history)
@@ -30,7 +30,8 @@ Click it for a full breakdown: per-limit progress bars, reset countdowns, and th
 - 🟢 Color-coded status (Healthy → Moderate → High → Critical)
 - ⚠️ **Honest about staleness** — expired Claude Code sign-in shows a `⚠︎` on the icon and a warning row (never stale numbers passing as live), plus an "Updated Xm ago" line and auto-refresh on wake from sleep
 - 🔁 **Launch at Login** — on by default from first run (modern `SMAppService`, no LaunchAgents); toggle it off from the menu anytime
-- ⬆️ **In-app updates** — checks GitHub releases daily; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
+- ⬆️ **In-app updates** — checks GitHub on launch, menu-open, and wake; shows a blue `↑` on the menu-bar icon and an "Update available…" row when a new version exists; one click runs `brew reinstall` and relaunches (no Sparkle, no downloaded binaries)
+- ⚙️ **Live settings** — Theme, Layout, Menu Bar Style, and Auto Refresh live in a Settings panel that opens beside the menu; picking an option applies instantly without closing the menu
 - 🪶 Native Swift/AppKit, ~single file, no dependencies, no telemetry
 
 ## Requirements
@@ -76,9 +77,10 @@ The app is almost certainly running fine — macOS is just not showing it. Check
 Your Claude Code sign-in token expired (it lives ~12h and only Claude Code can renew it). Open a terminal, run `claude`, let it load, then click **Refresh now** in the ◐ menu.
 
 ## Privacy
-- Reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself).
-- Talks **only** to `api.anthropic.com`. Nothing is logged, stored remotely, or sent anywhere else.
+- Claude: reads the OAuth token from the macOS Keychain item `Claude Code-credentials` (created by Claude Code itself) and talks only to `api.anthropic.com`.
+- Codex: reads the OAuth token from `~/.codex/auth.json` (created by the Codex CLI) and talks only to `chatgpt.com`.
+- Nothing is logged, stored remotely, or sent anywhere else.
 - Fully open source — read [`Sources/ClaudeUsageBar.swift`](Sources/ClaudeUsageBar.swift).
 
 ## License
-[MIT](LICENSE). "Claude" is a trademark of Anthropic; this project is not affiliated with Anthropic.
+[MIT](LICENSE). "Claude" is a trademark of Anthropic; "Codex", "ChatGPT", and the OpenAI logo are trademarks of OpenAI. This project is not affiliated with either company; marks are used only to identify the services being monitored.
